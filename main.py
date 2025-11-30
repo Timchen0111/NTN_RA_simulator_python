@@ -191,7 +191,7 @@ if __name__ == "__main__":
     print(f"Average Throughput (packets/slot): {avg_throughput:.2f}")
     print(f"Successful rate: {successesful_rate}")
 
-    # 簡單驗證：如果有成功數，代表流程通了
+
     if total_success_packets > 0:
         print(">> System validation: PASSED (Traffic is flowing)")
     else:
