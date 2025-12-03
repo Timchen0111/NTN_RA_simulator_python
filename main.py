@@ -124,12 +124,7 @@ class UE:
     def get_info(self):
         print("Location:", self.location, "Delay budget:" , self.budget, "Current delay:", self.delay)
 
-if __name__ == "__main__":
-    # 1. 參數設定
-    NUM_UE = 100
-    NUM_SAT = 2
-    TIME_SLOTS = 1000
-    
+def main(NUM_UE, NUM_SAT, TIME_SLOTS):
     print(f"--- Simulation Start ---")
     print(f"UEs: {NUM_UE}, Satellites: {NUM_SAT}, Time Slots: {TIME_SLOTS}")
 
@@ -190,9 +185,4 @@ if __name__ == "__main__":
     print(f"Total Dropped Packets: {total_lost_packets}")
     print(f"Average Throughput (packets/slot): {avg_throughput:.2f}")
     print(f"Successful rate: {successesful_rate}")
-
-
-    if total_success_packets > 0:
-        print(">> System validation: PASSED (Traffic is flowing)")
-    else:
-        print(">> System validation: WARNING (No success recorded, check active_prob or Z)")
+    return avg_throughput, successesful_rate
