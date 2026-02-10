@@ -1,13 +1,14 @@
 import main
 import matplotlib.pyplot as plt
 results = []
-for i in range(5):
-    r = main.main(100*(i+1),2,1000)
+plot_num = 5
+for i in range(plot_num):
+    r = main.main(100*(i+1),2,100)
     results.append(r)
 print(results)
 
 # 1. 準備 X 軸數據 (UE 數量)
-x_ue = [100 * (i + 1) for i in range(5)]
+x_ue = [100 * (i + 1) for i in range(plot_num)]
 
 # 2. 準備 Y 軸數據 (從 results 裡面拆解出來)
 # results 裡的格式是 [(throughput, rate), (throughput, rate), ...]

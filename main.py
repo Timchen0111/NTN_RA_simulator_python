@@ -1,4 +1,6 @@
 import numpy as np
+import Satellite as s  # 假設 Satellite.py 在同一目錄下
+
 class satellite:
     def __init__(self, id, location, t_max=600, Z=54):
         self.id = id
@@ -43,7 +45,7 @@ class UE:
         self.ACB = []
     def acquire_visible_sat(self,sat_list):
         self.visible_satellites = sat_list #先簡單設成全部
-    def new_time(self):
+    def new_time(self,bursty):
         if self.active == True:
             self.delay += 1
             if self.delay > self.budget:
@@ -51,11 +53,12 @@ class UE:
                 self.loss += 1
                 self.delay = 0
         else:
-            if np.random.rand()<self.active_prob: 
+            if bursty:
+                #RAO長度訂為640ms
                 self.new_packet()
     def new_packet(self):
         self.active = True
-        self.budget = 10 #之後會改
+        self.budget = np.random.randint(5) #改成數個不同類型的 UE，分別有不同的 delay budget
         self.delay = 0
         self.target_satellite = None
     def calculate_ACB(self, current_time, p=4, x_params=[1, 2, 0.05]):
@@ -89,7 +92,7 @@ class UE:
             ACB_set.append(0.5) #暫時先確定能動，先完成後續部分。`
         self.ACB = ACB_set
     def determine_order(self):
-        self.order = np.random.permutation(len(self.visible_satellites)) #純隨機，之後再改
+        self.order = np.random.permutation(len(self.visible_satellites)) #純隨機，之後再改 可以先寫比ranking score的排序機制，至於ranking score值先隨便定
     def ACB_test(self):
         if not self.active:
             return
@@ -124,35 +127,43 @@ class UE:
     def get_info(self):
         print("Location:", self.location, "Delay budget:" , self.budget, "Current delay:", self.delay)
 
-def main(NUM_UE, NUM_SAT, TIME_SLOTS):
+def main(NUM_UE, NUM_SAT, SECONDS):
     print(f"--- Simulation Start ---")
-    print(f"UEs: {NUM_UE}, Satellites: {NUM_SAT}, Time Slots: {TIME_SLOTS}")
+    print(f"UEs: {NUM_UE}, Satellites: {NUM_SAT}, Time Slots: {SECONDS}")
 
     # 2. 初始化物件
     # 建立 2 顆衛星
     sat_list = [satellite(id=i, location=[0, 0, 500]) for i in range(NUM_SAT)]
     
     # 建立 100 個 UE
-    ue_list = [UE(location=[0, 0], id=i) for i in range(NUM_UE)]
+    ue_list = [UE(location=[0, 0], id=i) for i in range(NUM_UE)] #增加隨機的位置參數
     
     # 初始化 UE 的可見衛星列表 (假設全體可見)
     for ue in ue_list:
         ue.acquire_visible_sat(sat_list)
 
+    #建立Burst time table
+    tb = 10000
+    trao = 640
+    burst_count = SECONDS*1000//tb
+    samples = np.random.beta(3, 4, burst_count * NUM_UE) #每個UE在每次Burst period都會產生一個bursty time
+    arrival_times = samples * tb  #將樣本轉換成毫秒，並且分布在每個Burst period的0到tb秒之間
+    arrival_rao  = arrival_times//trao #離散化，算出burst在第幾個RAO index
     # 3. 數據收集用的 List
     throughput_history = [] # 記錄每個 Slot 的成功數
 
     # 4. 主模擬迴圈
-    for t in range(TIME_SLOTS):
-        
+    RAO_COUNTS = SECONDS * 1000 // trao  # 將秒數轉換成640ms的Slot數
+    for n in range(RAO_COUNTS): #統一用n，表示現在是在第幾個RAO
         # --- Step A: 更新時間與產生封包 ---
+        burst_idx = n*trao // tb #計算目前在哪個Burst period
         for ue in ue_list:
-            ue.new_time()
-
+            burst_idx_ue = burst_idx*tb//trao + arrival_rao[burst_idx * NUM_UE + ue.id] #每個UE在每個Burst period都會有一個對應的bursty time
+            ue.new_time(bursty=True if burst_idx_ue == n else False) #如果目前的Slot時間超過了該UE的bursty time，則產生新封包
         # --- Step B: 計算參數與決定策略 ---
         # 目前 calculate_ACB 是固定 0.5，之後要把註解打開
         for ue in ue_list:
-            ue.calculate_ACB(current_time=t)
+            ue.calculate_ACB(current_time=n)
             ue.determine_order()
 
         # --- Step C: 執行接入測試 (ACB Test & Transmission) ---
@@ -177,12 +188,12 @@ def main(NUM_UE, NUM_SAT, TIME_SLOTS):
     # 5. 統計結果
     total_success_packets = sum(throughput_history)
     total_lost_packets = sum(ue.loss for ue in ue_list)
-    avg_throughput = total_success_packets / TIME_SLOTS
+    avg_throughput = total_success_packets / (RAO_COUNTS * trao / 1000)  # packets per second
     successesful_rate = total_success_packets/(total_success_packets+total_lost_packets)
 
     print(f"\n--- Simulation Complete ---")
     print(f"Total Successful Accesses: {total_success_packets}")
     print(f"Total Dropped Packets: {total_lost_packets}")
-    print(f"Average Throughput (packets/slot): {avg_throughput:.2f}")
+    print(f"Average Throughput (packets/second): {avg_throughput:.2f}")
     print(f"Successful rate: {successesful_rate}")
     return avg_throughput, successesful_rate
