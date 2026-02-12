@@ -2,13 +2,13 @@ import main
 import matplotlib.pyplot as plt
 
 # 1. 執行模擬並收集數據
-ue_counts = [300, 600, 900, 1200, 1500]
+ue_counts = [10]
 results_proposed = []
 results_traditional = []
 
 for count in ue_counts:
-    r_prop = main.main(count, 3, 100, 1)
-    r_trad = main.main(count, 3, 100, 0)
+    r_prop = main.main(count, 4, 100, 1)
+    r_trad = main.main(count, 4, 100, 0)
     
     results_proposed.append(r_prop)
     results_traditional.append(r_trad)

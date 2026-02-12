@@ -1,11 +1,12 @@
 import numpy as np
 from skyfield.api import load, EarthSatellite, wgs84
+from datetime import datetime, timezone
+import orbit
 
 class satellite:
-    def __init__(self, id, tle_line1, tle_line2, Z=54):
+    def __init__(self, id, skyfield_sat, Z=54):
         self.id = id
-        self.tle_line1 = tle_line1
-        self.tle_line2 = tle_line2
+        self.skyfield_sat = skyfield_sat
         self.Z = Z          # Number of available preambles 固定為54
         self.ue_pre = {} # 暫存這個 Time Slot 嘗試接入的 UE
     def receive_preamble(self,ue_id):
@@ -43,12 +44,11 @@ class UE:
         self.visible_satellites = []
         self.order = []
         self.ACB = []
-    def acquire_visible_sat(self,sat_list):
+    def acquire_visible_sat(self,sat_list,current_time_obj):
         self.visible_satellites = []
-        ts = load.timescale()
+        ue_geo = wgs84.latlon(self.location[0], self.location[1])
         for sat in sat_list:
-            satellite = EarthSatellite(sat.tle_line1, sat.tle_line2, "sat1", ts)
-            if is_visible(wgs84.latlon(25.03, 121.56), satellite, min_elevation=10, t=ts.now()):
+            if is_visible(ue_geo, sat.skyfield_sat, min_elevation=1, t=current_time_obj):
                 self.visible_satellites.append(sat)
     def new_time(self,bursty):
         if self.active == True:
@@ -158,19 +158,32 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
 
     print(f"--- Simulation Start ---")
     print(f"UEs: {NUM_UE}, Satellites: {NUM_SAT}, Time Slots: {SECONDS}")
+    # 取得真實衛星列表 (Top-N 軌道面)
+    # 設定模擬開始時間
+    ts = load.timescale()
+    start_dt = datetime(2026, 2, 12, 20, 42, 0, tzinfo=timezone.utc)
+    t_start = ts.from_datetime(start_dt)
+    
+    # 設定觀察點 (台北)
+    taipei_geo = wgs84.latlon(25.03, 121.56)
 
-    # 初始化物件
-    # 建立 2 顆衛星
-    line1 = '1 44714U 19074B   26041.94205644  .00001608  00000+0  64812-4 0  9997'
-    line2 = '2 44714  53.1572 303.1657 0001504  94.7794 265.3379 15.31036492344774' 
-    sat_list = [satellite(id=i, tle_line1=line1, tle_line2=line2) for i in range(NUM_SAT)]
+    print("Load satellite information...")
+    # 呼叫 Satellite.py 的函式 
+    real_sats = orbit.get_relevant_rail_planes(t_start, taipei_geo, top_n=NUM_SAT)
     
-    # 建立 100 個 UE
-    ue_list = [UE(location=[0, 0], id=i) for i in range(NUM_UE)] #增加隨機的位置參數
+    # 將真實衛星「封裝」進您的 Simulation Class
+    sat_list = []
+    for i, real_sat in enumerate(real_sats):
+        s = satellite(id=i, skyfield_sat=real_sat)
+        sat_list.append(s)
     
-    # 初始化 UE 的可見衛星列表
-    for ue in ue_list:
-        ue.acquire_visible_sat(sat_list)
+    print(f"Complete building environment: {len(sat_list)} satellites loaded.")
+
+    ue_list = []
+    for i in range(NUM_UE):
+        lat = 25.03 + np.random.uniform(-0.1, 0.1)
+        lon = 121.56 + np.random.uniform(-0.1, 0.1)
+        ue_list.append(UE(location=[lat, lon], id=i))
 
     # 建立Burst time table
     tb = 10000
@@ -192,7 +205,9 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
             ue.new_time(bursty=True if burst_idx_ue == n else False) #如果目前的Slot時間超過了該UE的bursty time，則產生新封包
         # --- 衛星移動與可見衛星列表更新 ---
         for sat in sat_list:
-            pass 
+            pass
+        for ue in ue_list:
+            ue.acquire_visible_sat(sat_list, t_start + n*trao/1000) #更新每個UE的可見衛星列表，時間要換算成秒
         # --- 計算參數與決定策略 ---
         # 目前 calculate_ACB 是固定 0.5，之後要把註解打開
         for ue in ue_list:

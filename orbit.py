@@ -1,6 +1,5 @@
 import numpy as np
 from skyfield.api import load, wgs84
-import os
 
 # 增加 top_n 參數，預設為 4
 def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4):
