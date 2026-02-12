@@ -1,43 +1,50 @@
 import main
 import matplotlib.pyplot as plt
-results = []
-plot_num = 5
-for i in range(plot_num):
-    r = main.main(100*(i+1),2,100)
-    results.append(r)
-print(results)
 
-# 1. 準備 X 軸數據 (UE 數量)
-x_ue = [100 * (i + 1) for i in range(plot_num)]
+# 1. 執行模擬並收集數據
+ue_counts = [300, 600, 900, 1200, 1500]
+results_proposed = []
+results_traditional = []
 
-# 2. 準備 Y 軸數據 (從 results 裡面拆解出來)
-# results 裡的格式是 [(throughput, rate), (throughput, rate), ...]
-y_throughput = [r[0] for r in results]
-y_success_rate = [r[1] for r in results]
+for count in ue_counts:
+    r_prop = main.main(count, 3, 100, 1)
+    r_trad = main.main(count, 3, 100, 0)
+    
+    results_proposed.append(r_prop)
+    results_traditional.append(r_trad)
 
-# 3. 設定畫布大小
-plt.figure(figsize=(12, 5))
+# 2. 準備繪圖數據
+y_tp_prop = [r[0] for r in results_proposed]
+y_sr_prop = [r[1] for r in results_proposed]
 
-# --- 第一張圖：Average Throughput ---
-plt.subplot(1, 2, 1)  # 1列2行，這是第1張
-plt.plot(x_ue, y_throughput, marker='o', color='blue', label='Avg Throughput')
+y_tp_trad = [r[0] for r in results_traditional]
+y_sr_trad = [r[1] for r in results_traditional]
+
+# 3. 設定畫布
+plt.figure(figsize=(14, 6))
+
+# --- 左圖：Average Throughput 比較 ---
+plt.subplot(1, 2, 1)
+plt.plot(ue_counts, y_tp_prop, marker='s', markersize=8, color='blue', label='Proposed (SBC)')
+plt.plot(ue_counts, y_tp_trad, marker='d', markersize=8, color='red', linestyle='--', label='Traditional (Single ACB test)')
 plt.title('UE Quantity vs Average Throughput')
-plt.xlabel('UE Quantity')
-plt.ylabel('Average Throughput')
-plt.grid(True)
+plt.xlabel('UE Quantity (Massive IoT Devices)')
+plt.ylabel('Average Throughput (packets/slot)')
+plt.grid(True, which='both', linestyle='--', alpha=0.5)
 plt.legend()
 
-# --- 第二張圖：Successful Rate ---
-plt.subplot(1, 2, 2)  # 1列2行，這是第2張
-plt.plot(x_ue, y_success_rate, marker='s', color='green', label='Success Rate')
-plt.title('UE Quantity vs Successful Rate')
-plt.xlabel('UE Quantity')
-plt.ylabel('Successful Rate')
-plt.grid(True)
+# --- 右圖：Success Rate 比較 ---
+plt.subplot(1, 2, 2)
+plt.plot(ue_counts, y_sr_prop, marker='s', markersize=8, color='green', label='Proposed (SBC)')
+plt.plot(ue_counts, y_sr_trad, marker='d', markersize=8, color='orange', linestyle='--', label='Traditional (Single ACB test)')
+plt.title('UE Quantity vs Success Rate')
+plt.xlabel('UE Quantity (Massive IoT Devices)')
+plt.ylabel('Success Rate')
+plt.grid(True, which='both', linestyle='--', alpha=0.5)
 plt.legend()
 
-# 4. 顯示圖表
-plt.tight_layout() # 避免標籤重疊
+# 4. 優化佈局並顯示
+plt.tight_layout()
 plt.show()
 
     

@@ -1,11 +1,11 @@
 import numpy as np
-import Satellite as s  # 假設 Satellite.py 在同一目錄下
+from skyfield.api import load, EarthSatellite, wgs84
 
 class satellite:
-    def __init__(self, id, location, t_max=600, Z=54):
+    def __init__(self, id, tle_line1, tle_line2, Z=54):
         self.id = id
-        self.location = location
-        self.t_max = t_max  # Maximum pass duration 在套用真實衛星軌道前先隨便定
+        self.tle_line1 = tle_line1
+        self.tle_line2 = tle_line2
         self.Z = Z          # Number of available preambles 固定為54
         self.ue_pre = {} # 暫存這個 Time Slot 嘗試接入的 UE
     def receive_preamble(self,ue_id):
@@ -44,7 +44,12 @@ class UE:
         self.order = []
         self.ACB = []
     def acquire_visible_sat(self,sat_list):
-        self.visible_satellites = sat_list #先簡單設成全部
+        self.visible_satellites = []
+        ts = load.timescale()
+        for sat in sat_list:
+            satellite = EarthSatellite(sat.tle_line1, sat.tle_line2, "sat1", ts)
+            if is_visible(wgs84.latlon(25.03, 121.56), satellite, min_elevation=10, t=ts.now()):
+                self.visible_satellites.append(sat)
     def new_time(self,bursty):
         if self.active == True:
             self.delay += 1
@@ -54,7 +59,6 @@ class UE:
                 self.delay = 0
         else:
             if bursty:
-                #RAO長度訂為640ms
                 self.new_packet()
     def new_packet(self):
         self.active = True
@@ -111,6 +115,18 @@ class UE:
         else:
             # Backoff: 本回合不傳輸
             pass
+    def Traditional_ACB_test(self):
+        if not self.active or self.visible_satellites == []:
+            return
+        chosen_sat_idx = np.random.choice(len(self.visible_satellites))
+        p_acb = self.ACB[chosen_sat_idx] #固定值
+        if np.random.rand() < p_acb:
+            # 通過 ACB，隨機選擇一顆衛星進行接入
+            target_sat = self.visible_satellites[chosen_sat_idx]
+            self.execute_RA(target_sat)
+        else:
+            # Backoff: 本回合不傳輸
+            pass
     def execute_RA(self,target_sat):
         #實際傳輸 Preamble
         target_sat.receive_preamble(self.id)        
@@ -127,51 +143,71 @@ class UE:
     def get_info(self):
         print("Location:", self.location, "Delay budget:" , self.budget, "Current delay:", self.delay)
 
-def main(NUM_UE, NUM_SAT, SECONDS):
+def is_visible(UE_location, satellite, min_elevation,t):
+    difference = satellite - UE_location
+    topocentric = difference.at(t)
+    alt, az, distance = topocentric.altaz()
+    return alt.degrees > min_elevation
+
+def main(NUM_UE, NUM_SAT, SECONDS, MODE):
+    # 模式設定
+    if MODE == 1:
+        SBC = True  
+    else:
+        SBC = False
+
     print(f"--- Simulation Start ---")
     print(f"UEs: {NUM_UE}, Satellites: {NUM_SAT}, Time Slots: {SECONDS}")
 
-    # 2. 初始化物件
+    # 初始化物件
     # 建立 2 顆衛星
-    sat_list = [satellite(id=i, location=[0, 0, 500]) for i in range(NUM_SAT)]
+    line1 = '1 44714U 19074B   26041.94205644  .00001608  00000+0  64812-4 0  9997'
+    line2 = '2 44714  53.1572 303.1657 0001504  94.7794 265.3379 15.31036492344774' 
+    sat_list = [satellite(id=i, tle_line1=line1, tle_line2=line2) for i in range(NUM_SAT)]
     
     # 建立 100 個 UE
     ue_list = [UE(location=[0, 0], id=i) for i in range(NUM_UE)] #增加隨機的位置參數
     
-    # 初始化 UE 的可見衛星列表 (假設全體可見)
+    # 初始化 UE 的可見衛星列表
     for ue in ue_list:
         ue.acquire_visible_sat(sat_list)
 
-    #建立Burst time table
+    # 建立Burst time table
     tb = 10000
     trao = 640
     burst_count = SECONDS*1000//tb
     samples = np.random.beta(3, 4, burst_count * NUM_UE) #每個UE在每次Burst period都會產生一個bursty time
     arrival_times = samples * tb  #將樣本轉換成毫秒，並且分布在每個Burst period的0到tb秒之間
     arrival_rao  = arrival_times//trao #離散化，算出burst在第幾個RAO index
-    # 3. 數據收集用的 List
+    # 數據收集用的 List
     throughput_history = [] # 記錄每個 Slot 的成功數
 
-    # 4. 主模擬迴圈
+    # 主模擬迴圈
     RAO_COUNTS = SECONDS * 1000 // trao  # 將秒數轉換成640ms的Slot數
     for n in range(RAO_COUNTS): #統一用n，表示現在是在第幾個RAO
-        # --- Step A: 更新時間與產生封包 ---
+        # --- 更新時間與產生封包 ---
         burst_idx = n*trao // tb #計算目前在哪個Burst period
         for ue in ue_list:
             burst_idx_ue = burst_idx*tb//trao + arrival_rao[burst_idx * NUM_UE + ue.id] #每個UE在每個Burst period都會有一個對應的bursty time
             ue.new_time(bursty=True if burst_idx_ue == n else False) #如果目前的Slot時間超過了該UE的bursty time，則產生新封包
-        # --- Step B: 計算參數與決定策略 ---
+        # --- 衛星移動與可見衛星列表更新 ---
+        for sat in sat_list:
+            pass 
+        # --- 計算參數與決定策略 ---
         # 目前 calculate_ACB 是固定 0.5，之後要把註解打開
         for ue in ue_list:
             ue.calculate_ACB(current_time=n)
             ue.determine_order()
 
-        # --- Step C: 執行接入測試 (ACB Test & Transmission) ---
+        # --- SBC procedure---
         for ue in ue_list:
             # 如果通過 ACB，會呼叫 sat.receive_preamble()
-            ue.ACB_test()
+            if SBC:
+                ue.ACB_test()
+            else:
+                ue.Traditional_ACB_test()
 
-        # --- Step D: 衛星端處理 (碰撞檢測) ---
+        # --- 衛星端處理 (碰撞檢測) ---
         total_success_ids_in_this_slot = []
         for sat in sat_list:
             # 回傳該衛星成功接收的 UE ID 列表
@@ -181,11 +217,11 @@ def main(NUM_UE, NUM_SAT, SECONDS):
         # 記錄本時間點的總吞吐量
         throughput_history.append(len(total_success_ids_in_this_slot))
 
-        # --- Step E: 回傳結果給 UE (更新狀態) ---
+        # --- 回傳結果給 UE (更新狀態) ---
         for ue in ue_list:
             ue.receive_feedback(total_success_ids_in_this_slot)
 
-    # 5. 統計結果
+    # 統計結果
     total_success_packets = sum(throughput_history)
     total_lost_packets = sum(ue.loss for ue in ue_list)
     avg_throughput = total_success_packets / (RAO_COUNTS * trao / 1000)  # packets per second
