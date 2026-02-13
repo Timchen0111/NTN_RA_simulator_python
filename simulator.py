@@ -2,16 +2,17 @@ import main
 import matplotlib.pyplot as plt
 
 # 1. 執行模擬並收集數據
-ue_counts = [10]
+ue_counts = [50, 100, 150]
 results_proposed = []
 results_traditional = []
 
 for count in ue_counts:
     r_prop = main.main(count, 4, 100, 1)
     r_trad = main.main(count, 4, 100, 0)
-    
+        
     results_proposed.append(r_prop)
     results_traditional.append(r_trad)
+
 
 # 2. 準備繪圖數據
 y_tp_prop = [r[0] for r in results_proposed]

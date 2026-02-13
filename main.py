@@ -1,7 +1,7 @@
 import numpy as np
 from skyfield.api import load, EarthSatellite, wgs84
-from datetime import datetime, timezone
 import orbit
+from datetime import datetime, timezone, timedelta  # 必須有 timedelta
 
 class satellite:
     def __init__(self, id, skyfield_sat, Z=54):
@@ -48,7 +48,7 @@ class UE:
         self.visible_satellites = []
         ue_geo = wgs84.latlon(self.location[0], self.location[1])
         for sat in sat_list:
-            if is_visible(ue_geo, sat.skyfield_sat, min_elevation=1, t=current_time_obj):
+            if is_visible(ue_geo, sat.skyfield_sat, min_elevation=20, t=current_time_obj):
                 self.visible_satellites.append(sat)
     def new_time(self,bursty):
         if self.active == True:
@@ -62,7 +62,7 @@ class UE:
                 self.new_packet()
     def new_packet(self):
         self.active = True
-        self.budget = np.random.randint(5) #改成數個不同類型的 UE，分別有不同的 delay budget
+        self.budget = 5 #其實這有點像是NACK重傳的次數限制，季報就先這樣講吧
         self.delay = 0
         self.target_satellite = None
     def calculate_ACB(self, current_time, p=4, x_params=[1, 2, 0.05]):
@@ -157,7 +157,7 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
         SBC = False
 
     print(f"--- Simulation Start ---")
-    print(f"UEs: {NUM_UE}, Satellites: {NUM_SAT}, Time Slots: {SECONDS}")
+    print(f"UEs: {NUM_UE}, Satellite orbits: {NUM_SAT}, Time Slots: {SECONDS}")
     # 取得真實衛星列表 (Top-N 軌道面)
     # 設定模擬開始時間
     ts = load.timescale()
@@ -204,10 +204,16 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
             burst_idx_ue = burst_idx*tb//trao + arrival_rao[burst_idx * NUM_UE + ue.id] #每個UE在每個Burst period都會有一個對應的bursty time
             ue.new_time(bursty=True if burst_idx_ue == n else False) #如果目前的Slot時間超過了該UE的bursty time，則產生新封包
         # --- 衛星移動與可見衛星列表更新 ---
-        for sat in sat_list:
-            pass
-        for ue in ue_list:
-            ue.acquire_visible_sat(sat_list, t_start + n*trao/1000) #更新每個UE的可見衛星列表，時間要換算成秒
+        if n % 10 == 0: #每10個RAO更新一次可見衛星列表，因為衛星移動不會太快
+            for ue in ue_list:
+                # 1. 先算出正確的 Python 時間 (基於 start_dt)
+                current_ms = n * trao
+                current_dt = start_dt + timedelta(milliseconds=current_ms)
+                # 2. 再轉成 Skyfield 的 Time 物件
+                current_t = ts.from_datetime(current_dt)
+                # 3. 傳入 acquire_visible_sat
+                ue.acquire_visible_sat(sat_list, current_t)
+
         # --- 計算參數與決定策略 ---
         # 目前 calculate_ACB 是固定 0.5，之後要把註解打開
         for ue in ue_list:
@@ -221,7 +227,14 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
                 ue.ACB_test()
             else:
                 ue.Traditional_ACB_test()
-
+        # [新增] 進度條與監控資訊 (每 50 slots 印一次)
+        if n % 50 == 0:
+            # 計算當前統計數據
+            active_count = sum(u.active for u in ue_list)
+            # 計算平均可視衛星數
+            avg_vis_sats = np.mean([len(u.visible_satellites) for u in ue_list])
+            # 使用 \r 讓同一行刷新，不會洗版
+            print(f"Slot {n}/{RAO_COUNTS} | Active: {active_count:3d} | AvgVisSat: {avg_vis_sats:.1f}", end='\r')
         # --- 衛星端處理 (碰撞檢測) ---
         total_success_ids_in_this_slot = []
         for sat in sat_list:

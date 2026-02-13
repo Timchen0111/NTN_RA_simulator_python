@@ -1,34 +1,45 @@
 import numpy as np
 from skyfield.api import load, wgs84
+import os
 
 # 增加 top_n 參數，預設為 4
 def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4):
     """
-    Finds orbital planes passing over a specific location and returns all satellites in those planes.
-    Only returns the Top-N planes with the most visible satellites.
+    Finds orbital planes passing over a specific location.
+    Simple Logic: If local TLE file exists, use it. If not, download it.
     """
     
-    # 1. Load TLE (Force reload to fix "0 satellites" issue)
+    # 1. 指定固定的檔名
+    local_filename = 'starlink_tle.txt'
+    
     if tle_url is None:
         tle_url = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle'
     
-    print("[Step 1] Downloading TLE data...")
+    print("[Step 1] Loading TLE data...")
     
-    # reload=True ensures we don't use a broken cached file
+    # --- [修改邏輯] 簡單粗暴：檔案不在才下載 ---
+    # os.path.exists(local_filename) 會回傳 True 或 False
+    # 我們只需要在它回傳 False (檔案不存在) 時，讓 reload=True
+    need_download = not os.path.exists(local_filename)
+    
+    if need_download:
+        print(f"[System] Local file '{local_filename}' not found. Downloading...")
+    else:
+        print(f"[System] Found '{local_filename}'. Using cached data for consistency.")
+
     try:
-        satellites = load.tle_file(tle_url, reload=True)
+        # Skyfield 會自動處理：若 reload=False，它會直接讀本地檔
+        satellites = load.tle_file(tle_url, filename=local_filename, reload=need_download)
     except Exception as e:
-        print(f"[Error] Failed to download TLE: {e}")
+        print(f"[Error] Failed to load TLE: {e}")
         return []
+    # --------------------------------------------
 
     print(f"DEBUG: Raw TLE records loaded: {len(satellites)}")
     
-    # Debug: Check the first satellite name to ensure filtering logic is correct
-    if len(satellites) > 0:
-        print(f"DEBUG: First satellite name in DB: '{satellites[0].name}'")
-
-    # Filter for Starlink only
+    # (以下程式碼完全不用動)
     starlinks = [s for s in satellites if 'STARLINK' in s.name]
+    # ...
     print(f"Total Starlink satellites found: {len(starlinks)}")
     
     if len(starlinks) == 0:
