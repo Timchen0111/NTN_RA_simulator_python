@@ -4,7 +4,7 @@ import orbit
 from datetime import datetime, timezone, timedelta  # 必須有 timedelta
 
 class satellite:
-    def __init__(self, id, skyfield_sat, Z=54):
+    def __init__(self, id, skyfield_sat, Z=2):
         self.id = id
         self.skyfield_sat = skyfield_sat
         self.Z = Z          # Number of available preambles 固定為54
@@ -65,7 +65,7 @@ class UE:
         self.budget = 5 #其實這有點像是NACK重傳的次數限制，季報就先這樣講吧
         self.delay = 0
         self.target_satellite = None
-    def calculate_ACB(self, current_time, p=4, x_params=[1, 2, 0.05]):
+    def calculate_ACB(self, dynamic_acb, current_time, p=4, x_params=[1, 2, 0.05]):
         """
         核心邏輯：計算混合急迫性分數 S 與 ACB 因子
         Eq (6): S_{i,k} = (|d/d_B|^p + |1/K * (1-gamma/T_max)|^p)^(1/p)
@@ -92,8 +92,8 @@ class UE:
             ACB_set.append(p_acb)
         """
         ACB_set = []
-        for sat in self.visible_satellites:
-            ACB_set.append(0.5) #暫時先確定能動，先完成後續部分。`
+        for sat in self.visible_satellites:            
+            ACB_set.append(dynamic_acb) #在這個簡化版本假定全部都設一樣
         self.ACB = ACB_set
     def determine_order(self):
         self.order = np.random.permutation(len(self.visible_satellites)) #純隨機，之後再改 可以先寫比ranking score的排序機制，至於ranking score值先隨便定
@@ -151,10 +151,16 @@ def is_visible(UE_location, satellite, min_elevation,t):
 
 def main(NUM_UE, NUM_SAT, SECONDS, MODE):
     # 模式設定
-    if MODE == 1:
-        SBC = True  
+    if MODE == 0:
+        SBC = False  
     else:
-        SBC = False
+        SBC = True
+
+    if MODE == 2:
+        dynamic_acb = True
+    else:
+        dynamic_acb = False
+    
 
     print(f"--- Simulation Start ---")
     print(f"UEs: {NUM_UE}, Satellite orbits: {NUM_SAT}, Time Slots: {SECONDS}")
@@ -165,11 +171,11 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
     t_start = ts.from_datetime(start_dt)
     
     # 設定觀察點 (台北)
-    taipei_geo = wgs84.latlon(25.03, 121.56)
+    geo = wgs84.latlon(25.03, 121.56)
 
     print("Load satellite information...")
     # 呼叫 Satellite.py 的函式 
-    real_sats = orbit.get_relevant_rail_planes(t_start, taipei_geo, top_n=NUM_SAT)
+    real_sats = orbit.get_relevant_rail_planes(t_start, geo, top_n=NUM_SAT)
     
     # 將真實衛星「封裝」進您的 Simulation Class
     sat_list = []
@@ -181,8 +187,8 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
 
     ue_list = []
     for i in range(NUM_UE):
-        lat = 25.03 + np.random.uniform(-0.1, 0.1)
-        lon = 121.56 + np.random.uniform(-0.1, 0.1)
+        lat = 25.03 + np.random.uniform(-1, 1)
+        lon = 121.56 + np.random.uniform(-1, 1)
         ue_list.append(UE(location=[lat, lon], id=i))
 
     # 建立Burst time table
@@ -204,21 +210,30 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
             burst_idx_ue = burst_idx*tb//trao + arrival_rao[burst_idx * NUM_UE + ue.id] #每個UE在每個Burst period都會有一個對應的bursty time
             ue.new_time(bursty=True if burst_idx_ue == n else False) #如果目前的Slot時間超過了該UE的bursty time，則產生新封包
         # --- 衛星移動與可見衛星列表更新 ---
-        if n % 10 == 0: #每10個RAO更新一次可見衛星列表，因為衛星移動不會太快
+        if n % 5 == 0 or n == 1: #每5個RAO更新一次可見衛星列表，因為衛星移動不會太快
+            current_ms = n * trao
+            current_dt = start_dt + timedelta(milliseconds=current_ms)
+            current_t = ts.from_datetime(current_dt)
             for ue in ue_list:
-                # 1. 先算出正確的 Python 時間 (基於 start_dt)
-                current_ms = n * trao
-                current_dt = start_dt + timedelta(milliseconds=current_ms)
-                # 2. 再轉成 Skyfield 的 Time 物件
-                current_t = ts.from_datetime(current_dt)
-                # 3. 傳入 acquire_visible_sat
                 ue.acquire_visible_sat(sat_list, current_t)
 
         # --- 計算參數與決定策略 ---
         # 目前 calculate_ACB 是固定 0.5，之後要把註解打開
+        if dynamic_acb:
+            active_count = sum(u.active for u in ue_list) 
+            preference_visible_satellites = []
+            for sat in sat_list:
+                if is_visible(geo, sat.skyfield_sat, min_elevation=20, t=current_t):
+                    preference_visible_satellites.append(sat)         
+            current_visible_count = len(preference_visible_satellites) 
+            resource = current_visible_count * sat_list[0].Z 
+            acb_value = min(1.0, resource / max(1, active_count))
+        else:
+            acb_value = 0.5
         for ue in ue_list:
-            ue.calculate_ACB(current_time=n)
+            ue.calculate_ACB(acb_value, current_time=n)
             ue.determine_order()
+
 
         # --- SBC procedure---
         for ue in ue_list:
