@@ -44,11 +44,11 @@ class UE:
         self.visible_satellites = []
         self.order = []
         self.ACB = []
+        self.geo = wgs84.latlon(self.location[0], self.location[1])
     def acquire_visible_sat(self,sat_list,current_time_obj):
         self.visible_satellites = []
-        ue_geo = wgs84.latlon(self.location[0], self.location[1])
         for sat in sat_list:
-            if is_visible(ue_geo, sat.skyfield_sat, min_elevation=20, t=current_time_obj):
+            if is_visible(self.geo, sat.skyfield_sat, min_elevation=20, t=current_time_obj):
                 self.visible_satellites.append(sat)
     def new_time(self,bursty):
         if self.active == True:
@@ -98,8 +98,6 @@ class UE:
     def determine_order(self):
         self.order = np.random.permutation(len(self.visible_satellites)) #純隨機，之後再改 可以先寫比ranking score的排序機制，至於ranking score值先隨便定
     def ACB_test(self):
-        if not self.active:
-            return
         chosen_sat = None
         pass_acb = False
         for i in self.order:
@@ -116,7 +114,7 @@ class UE:
             # Backoff: 本回合不傳輸
             pass
     def Traditional_ACB_test(self):
-        if not self.active or self.visible_satellites == []:
+        if self.visible_satellites == []:
             return
         chosen_sat_idx = np.random.choice(len(self.visible_satellites))
         p_acb = self.ACB[chosen_sat_idx] #固定值
@@ -149,14 +147,15 @@ def is_visible(UE_location, satellite, min_elevation,t):
     alt, az, distance = topocentric.altaz()
     return alt.degrees > min_elevation
 
-def main(NUM_UE, NUM_SAT, SECONDS, MODE):
+def main(NUM_UE, NUM_SAT, SECONDS, MODE, SEED):
     # 模式設定
-    if MODE == 0:
+    np.random.seed(SEED) # 固定隨機種子以確保可重現性
+    if MODE == 0 or MODE == 3:
         SBC = False  
     else:
         SBC = True
 
-    if MODE == 2:
+    if MODE == 2 or MODE == 3:
         dynamic_acb = True
     else:
         dynamic_acb = False
@@ -173,7 +172,7 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
     # 設定觀察點 (台北)
     geo = wgs84.latlon(25.03, 121.56)
 
-    print("Load satellite information...")
+    #print("Load satellite information...")
     # 呼叫 Satellite.py 的函式 
     real_sats = orbit.get_relevant_rail_planes(t_start, geo, top_n=NUM_SAT)
     
@@ -183,7 +182,7 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
         s = satellite(id=i, skyfield_sat=real_sat)
         sat_list.append(s)
     
-    print(f"Complete building environment: {len(sat_list)} satellites loaded.")
+    #print(f"Complete building environment: {len(sat_list)} satellites loaded.")
 
     ue_list = []
     for i in range(NUM_UE):
@@ -231,17 +230,19 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
         else:
             acb_value = 0.5
         for ue in ue_list:
-            ue.calculate_ACB(acb_value, current_time=n)
-            ue.determine_order()
-
+            if ue.active: #只對active的UE計算ACB和決定順序
+                ue.calculate_ACB(acb_value, current_time=n)
+                ue.determine_order()
 
         # --- SBC procedure---
         for ue in ue_list:
             # 如果通過 ACB，會呼叫 sat.receive_preamble()
-            if SBC:
-                ue.ACB_test()
-            else:
-                ue.Traditional_ACB_test()
+            if ue.active: 
+                if SBC:
+                    ue.ACB_test()
+                else:
+                    ue.Traditional_ACB_test()
+
         # [新增] 進度條與監控資訊 (每 50 slots 印一次)
         if n % 50 == 0:
             # 計算當前統計數據
@@ -262,7 +263,8 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE):
 
         # --- 回傳結果給 UE (更新狀態) ---
         for ue in ue_list:
-            ue.receive_feedback(total_success_ids_in_this_slot)
+            if ue.active: #只有active的UE才會收到反饋，並且可能改變狀態
+                ue.receive_feedback(total_success_ids_in_this_slot)
 
     # 統計結果
     total_success_packets = sum(throughput_history)

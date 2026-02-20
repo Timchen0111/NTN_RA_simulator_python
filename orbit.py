@@ -15,18 +15,18 @@ def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4)
     if tle_url is None:
         tle_url = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle'
     
-    print("[Step 1] Loading TLE data...")
+    #print("[Step 1] Loading TLE data...")
     
     # --- [修改邏輯] 簡單粗暴：檔案不在才下載 ---
     # os.path.exists(local_filename) 會回傳 True 或 False
     # 我們只需要在它回傳 False (檔案不存在) 時，讓 reload=True
     need_download = not os.path.exists(local_filename)
-    
+    '''
     if need_download:
         print(f"[System] Local file '{local_filename}' not found. Downloading...")
     else:
         print(f"[System] Found '{local_filename}'. Using cached data for consistency.")
-
+    '''
     try:
         # Skyfield 會自動處理：若 reload=False，它會直接讀本地檔
         satellites = load.tle_file(tle_url, filename=local_filename, reload=need_download)
@@ -35,19 +35,19 @@ def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4)
         return []
     # --------------------------------------------
 
-    print(f"DEBUG: Raw TLE records loaded: {len(satellites)}")
+    #print(f"DEBUG: Raw TLE records loaded: {len(satellites)}")
     
     # (以下程式碼完全不用動)
     starlinks = [s for s in satellites if 'STARLINK' in s.name]
     # ...
-    print(f"Total Starlink satellites found: {len(starlinks)}")
+    #print(f"Total Starlink satellites found: {len(starlinks)}")
     
     if len(starlinks) == 0:
-        print("[Error] No Starlink satellites found! Check your internet or TLE source.")
+        #print("[Error] No Starlink satellites found! Check your internet or TLE source.")
         return []
 
     # 2. Identify "Seed Satellites" (Visible now)
-    print(f"[Step 2] Searching for visible planes at {start_time.utc_strftime('%Y-%m-%d %H:%M:%S')}...")
+    #print(f"[Step 2] Searching for visible planes at {start_time.utc_strftime('%Y-%m-%d %H:%M:%S')}...")
     
     visible_planes_fingerprint = set() 
 
@@ -64,7 +64,7 @@ def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4)
         except:
             continue
             
-    print(f"Found {len(visible_planes_fingerprint)} seed satellites (visible now).")
+    #print(f"Found {len(visible_planes_fingerprint)} seed satellites (visible now).")
 
     # 3. Expand: Find all members of these planes
     TOLERANCE_RAAN = np.deg2rad(5.0)  
@@ -101,10 +101,10 @@ def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4)
     # 切片：只取前 Top N，並還原成原本的 (inc, raan) 格式以便下方代碼繼續使用
     unique_planes = [(x[0], x[1]) for x in plane_candidates[:top_n]]
     
-    print(f"[Step 3] Selected Top {len(unique_planes)} planes out of {len(plane_candidates)} candidates.")
+    #print(f"[Step 3] Selected Top {len(unique_planes)} planes out of {len(plane_candidates)} candidates.")
     # --- [修改結束] ---
 
-    print(f"DEBUG: Retrieving members for selected planes...")
+    #print(f"DEBUG: Retrieving members for selected planes...")
 
     for sat in starlinks:
         sat_inc = sat.model.inclo
@@ -126,7 +126,7 @@ def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4)
         if match:
             final_sats.append(sat)
 
-    print(f"[OK] Filtering complete! Retrieved {len(final_sats)} satellites (across {len(unique_planes)} planes).")
+    #print(f"[OK] Filtering complete! Retrieved {len(final_sats)} satellites (across {len(unique_planes)} planes).")
     return final_sats
 
 # --- Test Block ---
