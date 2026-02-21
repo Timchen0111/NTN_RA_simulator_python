@@ -219,6 +219,7 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE, SEED):
         # --- 計算參數與決定策略 ---
         # 目前 calculate_ACB 是固定 0.5，之後要把註解打開
         if dynamic_acb:
+            '''
             active_count = sum(u.active for u in ue_list) 
             preference_visible_satellites = []
             for sat in sat_list:
@@ -227,8 +228,25 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE, SEED):
             current_visible_count = len(preference_visible_satellites) 
             resource = current_visible_count * sat_list[0].Z 
             acb_value = min(1.0, resource / max(1, active_count))
+            active_count = sum(u.active for u in ue_list) 
+            '''
+            active_count = sum(u.active for u in ue_list) 
+            preference_visible_satellites = []
+            for sat in sat_list:
+                if is_visible(geo, sat.skyfield_sat, min_elevation=20, t=current_t):
+                    preference_visible_satellites.append(sat)         
+            current_visible_count = len(preference_visible_satellites) 
+            resource = current_visible_count * sat_list[0].Z 
+            target_p = min(1.0, resource / max(1, active_count))
+                
+            # [關鍵修正]：針對 SBC 的等效機率校正
+            if SBC:
+                acb_value = 1.0 - (1.0 - target_p) ** (1.0 / current_visible_count)
+            else:
+                acb_value = target_p
         else:
             acb_value = 0.5
+            
         for ue in ue_list:
             if ue.active: #只對active的UE計算ACB和決定順序
                 ue.calculate_ACB(acb_value, current_time=n)
