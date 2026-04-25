@@ -2,6 +2,36 @@ import numpy as np
 from skyfield.api import load, EarthSatellite, wgs84
 import orbit
 from datetime import datetime, timezone, timedelta  # 必須有 timedelta
+import Load_estimator
+
+class controller:
+    def __init__(self):
+        self.satellites = []
+        self.sat_num = len(self.satellites) 
+        self.Dmax = 5 #Delay budget的最大值
+        self.p_b = np.zeros(self.Dmax)  
+        self.S = []
+    def add_satellite(self, satellite):
+        self.satellites.append(satellite)
+        self.sat_num = len(self.satellites) 
+        self.S = np.ones(self.sat_num)
+    def load_estimator(self, expected_tables):
+        #取得衛星回報的 N_i, N_s, N_c
+        N_i = np.zeros(self.sat_num)
+        N_s = np.zeros(self.sat_num)
+        N_c = np.zeros(self.sat_num)
+        for i, sat in enumerate(self.satellites):
+            N_i[i], N_s[i], N_c[i] = sat.report()
+        #實作MoM estimator
+        Lambda = Load_estimator.load_estimator(N_i, N_s, N_c, tables=expected_tables) #傳入預計算好的期望值表
+        return Lambda
+    def backoff_control(self, total_load):
+        #實作backoff control
+        self.p_b = np.zeros(self.Dmax)  #temp
+        return 
+    def satellite_selection(self,Lambda):
+        self.S = np.ones(self.sat_num) #temp
+        return 
 
 class satellite:
     def __init__(self, id, skyfield_sat, Z=2):
@@ -9,6 +39,9 @@ class satellite:
         self.skyfield_sat = skyfield_sat
         self.Z = Z          # Number of available preambles 固定為54
         self.ue_pre = {} # 暫存這個 Time Slot 嘗試接入的 UE
+        self.N_i = 0 # Idle preambles
+        self.N_s = 0 # Successful preambles 
+        self.N_c = 0 # Collided preambles
     def receive_preamble(self,ue_id):
         # 模擬 UE隨機選取一個 Preamble (0 到 Z-1)
         chosen_preamble = np.random.randint(0, self.Z)
@@ -26,7 +59,13 @@ class satellite:
             if self.ue_pre[ue] not in duplicates:
                 success_list.append(ue)
         self.ue_pre.clear()
+        self.N_s = len(success_list)
+        self.N_c = len(duplicates)
+        self.N_i = self.Z - self.N_s - self.N_c
         return success_list
+
+    def report(self):
+        return self.N_i, self.N_s, self.N_c
 
     def get_info(self):
         print("ID:", self.id, "Location:", self.location)
@@ -41,9 +80,8 @@ class UE:
         self.success = 0
         self.active = False #Boolean
         self.active_prob = 0.5
+        self.QoS_requirement = [0.1,0.2,0.3,0.2,0.2] #對應不同delay budget的QoS需求，總和為1
         self.visible_satellites = []
-        self.order = []
-        self.ACB = []
         self.geo = wgs84.latlon(self.location[0], self.location[1])
     def acquire_visible_sat(self,sat_list,current_time_obj):
         self.visible_satellites = []
@@ -62,69 +100,37 @@ class UE:
                 self.new_packet()
     def new_packet(self):
         self.active = True
-        self.budget = 5 #其實這有點像是NACK重傳的次數限制，季報就先這樣講吧
+        r = np.random.rand()
+        self.budget = np.random.choice([1, 2, 3, 4, 5], p=self.QoS_requirement) #根據QoS需求隨機分配delay budget
+        #self.budget = 5 #其實這有點像是NACK重傳的次數限制，季報就先這樣講吧
         self.delay = 0
         self.target_satellite = None
-    def calculate_ACB(self, dynamic_acb, current_time, p=4, x_params=[1, 2, 0.05]):
-        """
-        核心邏輯：計算混合急迫性分數 S 與 ACB 因子
-        Eq (6): S_{i,k} = (|d/d_B|^p + |1/K * (1-gamma/T_max)|^p)^(1/p)
-        Eq (5): p_ACB = x1 * S^x2 + x3
-        if not self.active or not self.visible_satellites:
-            return
-
-        K_i = len(self.visible_satellites)
-        x1, x2, x3 = x_params
-        ACB_set = []
-        for sat in self.visible_satellites:
-            gamma = sat.get_remaining_time(current_time) # 這裡假設所有UE可視時間相同，之後必須換掉
-            t_max = sat.t_max
-            # Term 1: Delay Urgency
-            term1 = (self.delay / self.budget) ** p
-            # Term 2: Coverage Urgency
-            term2 = ( (1/K_i) * (1 - gamma/t_max) ) ** p # [cite: 83]
-            # Calculate S (Score)
-            S = (term1 + term2) ** (1/p)
-            # Calculate p_ACB (Probability) [cite: 64]
-            p_acb = x1 * (S ** x2) + x3
-            # 限制在 [0, 1]
-            p_acb = max(0.0, min(1.0, p_acb))
-            ACB_set.append(p_acb)
-        """
-        ACB_set = []
-        for sat in self.visible_satellites:            
-            ACB_set.append(dynamic_acb) #在這個簡化版本假定全部都設一樣
-        self.ACB = ACB_set
-    def determine_order(self):
-        self.order = np.random.permutation(len(self.visible_satellites)) #純隨機，之後再改 可以先寫比ranking score的排序機制，至於ranking score值先隨便定
+    def acquire_SIB(self,ctrl):
+        #取得系統資訊，包含backoff機率和衛星選擇資訊
+        self.p_b = ctrl.p_b
+        self.S = ctrl.S
     def ACB_test(self):
-        chosen_sat = None
-        pass_acb = False
-        for i in self.order:
-            p_acb = self.ACB[i]
-            if np.random.rand()<p_acb:
-                pass_acb = True
-                chosen_sat = i
-                break
-        if pass_acb:
-            # 取得對應的衛星物件
-            target_sat = self.visible_satellites[chosen_sat]
+        backoff = False
+        target_sat = None
+        r= np.random.rand()
+        if r < self.p_b[self.budget-self.delay-1]: # Backoff
+            backoff = True
+        if not backoff:
+            # 取得目前可見衛星在全體衛星集合中的 ID 
+            visible_ids = [sat.id for sat in self.visible_satellites]
+            # 提取對應的分數並計算機率 a_{i,k}
+            scores = np.array([self.S[k] for k in visible_ids])
+            exp_S = np.exp(scores)
+            prob_S = exp_S / np.sum(exp_S)            
+            # 隨機選擇一顆衛星並執行 RA
+            chosen_idx = np.random.choice(len(self.visible_satellites), p=prob_S)
+            target_sat = self.visible_satellites[chosen_idx]
+            
             self.execute_RA(target_sat)
         else:
             # Backoff: 本回合不傳輸
             pass
-    def Traditional_ACB_test(self):
-        if self.visible_satellites == []:
-            return
-        chosen_sat_idx = np.random.choice(len(self.visible_satellites))
-        p_acb = self.ACB[chosen_sat_idx] #固定值
-        if np.random.rand() < p_acb:
-            # 通過 ACB，隨機選擇一顆衛星進行接入
-            target_sat = self.visible_satellites[chosen_sat_idx]
-            self.execute_RA(target_sat)
-        else:
-            # Backoff: 本回合不傳輸
-            pass
+
     def execute_RA(self,target_sat):
         #實際傳輸 Preamble
         target_sat.receive_preamble(self.id)        
@@ -150,16 +156,6 @@ def is_visible(UE_location, satellite, min_elevation,t):
 def main(NUM_UE, NUM_SAT, SECONDS, MODE, SEED):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
-    if MODE == 0 or MODE == 3:
-        SBC = False  
-    else:
-        SBC = True
-
-    if MODE == 2 or MODE == 3:
-        dynamic_acb = True
-    else:
-        dynamic_acb = False
-    
 
     print(f"--- Simulation Start ---")
     print(f"UEs: {NUM_UE}, Satellite orbits: {NUM_SAT}, Time Slots: {SECONDS}")
@@ -176,11 +172,15 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE, SEED):
     # 呼叫 Satellite.py 的函式 
     real_sats = orbit.get_relevant_rail_planes(t_start, geo, top_n=NUM_SAT)
     
+    #設定controller
+    ctrl = controller()
+
     # 將真實衛星「封裝」進您的 Simulation Class
     sat_list = []
     for i, real_sat in enumerate(real_sats):
         s = satellite(id=i, skyfield_sat=real_sat)
         sat_list.append(s)
+        ctrl.add_satellite(s)
     
     #print(f"Complete building environment: {len(sat_list)} satellites loaded.")
 
@@ -199,7 +199,7 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE, SEED):
     arrival_rao  = arrival_times//trao #離散化，算出burst在第幾個RAO index
     # 數據收集用的 List
     throughput_history = [] # 記錄每個 Slot 的成功數
-
+    expected_tables = Load_estimator.precompute_expected_tables(Z=sat_list[0].Z, Nmax=1000) #預計算期望值表，傳入Z值和Nmax上限
     # 主模擬迴圈
     RAO_COUNTS = SECONDS * 1000 // trao  # 將秒數轉換成640ms的Slot數
     for n in range(RAO_COUNTS): #統一用n，表示現在是在第幾個RAO
@@ -215,51 +215,21 @@ def main(NUM_UE, NUM_SAT, SECONDS, MODE, SEED):
             current_t = ts.from_datetime(current_dt)
             for ue in ue_list:
                 ue.acquire_visible_sat(sat_list, current_t)
+        
+        #Controller-side processing
+        Lambda = ctrl.load_estimator(expected_tables) #每個RAO都呼叫一次load estimator，並且傳入預計算好的期望值表
+        ctrl.backoff_control(total_load=sum(Lambda)) 
+        ctrl.satellite_selection(Lambda=Lambda) 
 
-        # --- 計算參數與決定策略 ---
-        # 目前 calculate_ACB 是固定 0.5，之後要把註解打開
-        if dynamic_acb:
-            '''
-            active_count = sum(u.active for u in ue_list) 
-            preference_visible_satellites = []
-            for sat in sat_list:
-                if is_visible(geo, sat.skyfield_sat, min_elevation=20, t=current_t):
-                    preference_visible_satellites.append(sat)         
-            current_visible_count = len(preference_visible_satellites) 
-            resource = current_visible_count * sat_list[0].Z 
-            acb_value = min(1.0, resource / max(1, active_count))
-            active_count = sum(u.active for u in ue_list) 
-            '''
-            active_count = sum(u.active for u in ue_list) 
-            preference_visible_satellites = []
-            for sat in sat_list:
-                if is_visible(geo, sat.skyfield_sat, min_elevation=20, t=current_t):
-                    preference_visible_satellites.append(sat)         
-            current_visible_count = len(preference_visible_satellites) 
-            resource = current_visible_count * sat_list[0].Z 
-            target_p = min(1.0, resource / max(1, active_count))
-                
-            # [關鍵修正]：針對 SBC 的等效機率校正
-            if SBC:
-                acb_value = 1.0 - (1.0 - target_p) ** (1.0 / current_visible_count)
-            else:
-                acb_value = target_p
-        else:
-            acb_value = 0.5
-            
         for ue in ue_list:
             if ue.active: #只對active的UE計算ACB和決定順序
-                ue.calculate_ACB(acb_value, current_time=n)
-                ue.determine_order()
+                ue.acquire_SIB(ctrl)
 
-        # --- SBC procedure---
+        # UE-side processing
         for ue in ue_list:
             # 如果通過 ACB，會呼叫 sat.receive_preamble()
             if ue.active: 
-                if SBC:
-                    ue.ACB_test()
-                else:
-                    ue.Traditional_ACB_test()
+                ue.ACB_test()
 
         # [新增] 進度條與監控資訊 (每 50 slots 印一次)
         if n % 50 == 0:
