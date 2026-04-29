@@ -4,7 +4,7 @@ import numpy as np  # 記得 import numpy 來設定亂數種子
 
 # 1. 執行模擬並收集數據
 #ue_counts = [50,  100, 150]
-ue_counts = [50,75,100,125,150] # 正式跑的時候改回這行
+rho = [50,75,100,125,150] # 正式跑的時候改回這行
 SEEDS = [13,18,26,34,39,51] # 跑 3 次不同的隨機流量取平均
 #SEEDS = [50] # 測試用，正式跑的時候改回上面那行
 results_sbc_d = []
@@ -23,7 +23,7 @@ for count in ue_counts:
         # 【關鍵】：每次呼叫 main 之前重置亂數種子，確保 3 種策略面對完全相同的 UE 分布與流量
         print(f"Running simulations for UE count: {count} with seeds: {s}...")
         np.random.seed(s)
-        r_tr_d = main.main(count, 1, 100, 3, s)
+        = main.main(count, 1, 100, 3, s)
 
         np.random.seed(s)
         r_sbc_d = main.main(count, 1, 100, 2, s)
@@ -91,7 +91,6 @@ plt.plot(ue_counts, y_sr_tr_f, marker='^', markersize=8, color='cyan', linestyle
 plt.title('UE Quantity vs Success Rate')
 plt.xlabel('UE Quantity (Massive IoT Devices)')
 plt.ylabel('Success Rate')
-plt.grid(True, which='both', linestyle='--', alpha=0.5)
 plt.legend()
 
 # 4. 優化佈局並顯示

@@ -1,6 +1,6 @@
 import numpy as np
 
-def precompute_expected_tables(Z, Nmax=1000):
+def precompute_expected_tables(Z, Nmax=100):
     """
     在模擬開始前預先計算期望值表
     Z: 每顆衛星的前導碼總數
@@ -22,7 +22,7 @@ def precompute_expected_tables(Z, Nmax=1000):
             
         # 3. 碰撞期望值 E_c
         E_c_table[i] = Z - E_i_table[i] - E_s_table[i]
-        
+    
     return E_i_table, E_s_table, E_c_table
 
 def load_estimator(N_i, N_s, N_c, tables):
