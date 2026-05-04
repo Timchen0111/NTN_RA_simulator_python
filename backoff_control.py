@@ -17,6 +17,7 @@ class SatelliteEnv:
         return C
 
     def compute_pi(self, C, D, p_d):
+        
         numerator = np.zeros(D)
         inner_sum = 0.0
         for n in range(1, D + 1):
@@ -24,6 +25,7 @@ class SatelliteEnv:
             numerator[n-1] = self.rho * val
             inner_sum += val
         return numerator / (1 + self.rho * inner_sum)
+        
 
     def solve_p_c(self, p_b, D, p_d, K, Z):
         p_c = 0.5
@@ -36,17 +38,23 @@ class SatelliteEnv:
             p_c = new_p_c
         return p_c, C, pi
 
-def backoff_control(N_tilde, last_p_b, rho, D, p_d, K, Z):
-    env = SatelliteEnv(N_tilde, rho)
-    def objective(p_b_vec):
-        p_c, _, _ = env.solve_p_c(p_b_vec, D, p_d, K, Z)
-        return get_loss(p_b_vec, p_c, p_d, D)
+def backoff_control(N_tilde, last_p_b, rho, D, p_d, K, Z, MODE):
+    if MODE == 1:
+        env = SatelliteEnv(N_tilde, rho)
+        def objective(p_b_vec):
+            p_c, _, _ = env.solve_p_c(p_b_vec, D, p_d, K, Z)
+            return get_loss(p_b_vec, p_c, p_d, D)
 
-    res = minimize(objective, last_p_b, method='L-BFGS-B', 
-                   bounds=[(0, 1)] * D, tol=1e-6)
-    opt_p_b = res.x
-    _, _, opt_pi = env.solve_p_c(opt_p_b, D, p_d, K, Z)
-    return opt_p_b, opt_pi
+        res = minimize(objective, last_p_b, method='L-BFGS-B', 
+                    bounds=[(0, 1)] * D, tol=1e-6)
+        opt_p_b = res.x
+        _, _, opt_pi = env.solve_p_c(opt_p_b, D, p_d, K, Z)
+        return opt_p_b, opt_pi
+    else:
+        # MODE 2: 固定 p_b 為 0，僅更新 pi
+        env = SatelliteEnv(N_tilde, rho)
+        p_c, _, opt_pi = env.solve_p_c(np.zeros(D), D, p_d, K, Z)
+        return np.zeros(D), opt_pi
 
 def get_loss(p_b, p_c, p_d_arr, D):
     L = 0.0

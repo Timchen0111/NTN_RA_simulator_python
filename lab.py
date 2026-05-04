@@ -136,15 +136,38 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 '''
-num = 2000
-a,b,c=main.main(0.8, 1, 50, num, 1, 1)
+num = 10000
+a,b,c,d,e=main.main(0.05, 1, 200, num, 1, 1)
 plt.figure(figsize=(10, 6))
 plt.plot(range(len(c)), c, label='Estimated N (N_tilde)', color='blue', linewidth=1.5)
 plt.axhline(y=num, color='red', linestyle='--', label=f'True N ({num})') # 畫出真實值參考線
 
+
 plt.title('Convergence of Population Estimation (N_tilde)')
 plt.xlabel('Time Slot (n)')
 plt.ylabel('Estimated Population')
+plt.grid(True, alpha=0.3)
+plt.legend()
+plt.show()
+
+
+# 將 list 轉換為 numpy array 以便進行切片操作
+
+data_matrix = np.array(d)
+plt.figure(figsize=(10, 6))
+
+# 定義顏色與標籤，方便辨識 State 0 ~ 4
+colors = ['blue', 'green', 'red', 'orange', 'purple']
+labels = [f'State {i}' for i in range(5)]
+
+for i in range(5):
+    plt.plot(range(len(data_matrix)), data_matrix[:, i], 
+             label=labels[i], color=colors[i], linewidth=1.5)
+    plt.axhline(y=e[i], color=colors[i], linestyle='--', label=f'Observe Pi ({e[i]})') # 畫出真實值參考線
+
+plt.title('Convergence of State Distributions ($\pi_n$)', fontsize=14)
+plt.xlabel('Time Slot (n)', fontsize=12)
+plt.ylabel('Probability', fontsize=12)
 plt.grid(True, alpha=0.3)
 plt.legend()
 plt.show()

@@ -13,7 +13,10 @@ class controller:
         self.observe_pi = np.ones(self.Dmax) / self.Dmax
         self.S = []
         self.N_estimate = 0
-        self.rls = N_estimate.RLSEstimator(initial_N=self.N_estimate, P=2000, lam=0.995)
+        self.rls = N_estimate.RLSEstimator(initial_N=self.N_estimate)
+        #self.actualLambda=0
+        self.actualPi = np.zeros(self.Dmax) #用來記錄每個pi的真實值，供測試參考
+        self.actual = []
     def add_satellite(self, satellite):
         self.satellites.append(satellite)
         self.sat_num = len(self.satellites) 
@@ -29,28 +32,31 @@ class controller:
         #實作MoM estimator
         Lambda = Load_estimator.load_estimator(N_i, N_s, N_c, tables=expected_tables) #傳入預計算好的期望值表
         #Lambda = actual_lambda #測試用
+        self.actualLambda = sum(actual_lambda)
         #print(f"Total load estimation: Lambda={sum(Lambda)}, Actual Lambda={sum(actual_lambda)}")
         return Lambda
     def backoff_control(self, total_load, rho, p_d, K, Z, MODE,n):
         #實作backoff control
-        if MODE == 1:
-            denominator = np.sum(self.observe_pi * (1 - self.p_b))
-            N_tilde = self.N_estimation(Lambda=total_load, denominator=denominator)
-            self.N_estimate = N_tilde
-            self.p_b, self.observe_pi = backoff_control.backoff_control(N_tilde, self.p_b, rho, self.Dmax, p_d, K, Z)
-            #print(f"Backoff control updated: p_b={self.p_b}, pi={self.observe_pi}")
-        else:
-            self.p_b = np.zeros(self.Dmax)  #temp
+        denominator = np.sum(self.observe_pi * (1 - self.p_b))
+        N_tilde = self.N_estimation(Lambda=total_load, denominator=denominator)
+        self.N_estimate = N_tilde
+        #N_tilde = 10000 #丟真值測試用
+        self.p_b, self.observe_pi = backoff_control.backoff_control(N_tilde, self.p_b, rho, self.Dmax, p_d, K, Z,MODE)
+        if n % 10 == 0:
+            print(f"Actual Pi: {self.actualPi}, Observed Pi: {self.observe_pi}")
+            self.actual.append(list(self.actualPi[:5]))
+        #print(f"Backoff control updated: p_b={self.p_b}, pi={self.observe_pi}")
         return
     def satellite_selection(self,Lambda):
         self.S = np.ones(self.sat_num) #temp
         return
     def N_estimation(self, Lambda, denominator):
-        current_N = self.rls.update(Lambda, denominator)
+        #current_N = self.rls.update(Lambda, denominator)
+        current_N = Lambda/denominator if denominator > 0 else self.N_estimate #測試用
         return current_N
     '''
-    def N_estimation_old(self, Lambda, denominator, N_old, n, a=0.2):
-        if denominator > 0:
+    def N_estimationkkk(self, Lambda, denominator, N_old, n, a=0.1):
+        if denominator > 0 and n>0:
             a = 1.0 / (n ** 0.8)
             N_instant = Lambda / denominator
             N_new = (1 - a) * N_old + a * N_instant
@@ -58,8 +64,9 @@ class controller:
             N_new = N_old
         return N_new
     '''
+    
 class satellite:
-    def __init__(self, id, skyfield_sat, Z=10):
+    def __init__(self, id, skyfield_sat, Z=54):
         self.id = id
         self.skyfield_sat = skyfield_sat
         self.Z = Z          # Number of available preambles 固定為54
@@ -68,6 +75,8 @@ class satellite:
         self.N_s = 0 # Successful preambles 
         self.N_c = 0 # Collided preambles
         self.actual_lambda = 0 # 真實附載 (UE數量)，供測試參考
+    def assign_id(self, new_id):
+        self.id = new_id
     def receive_preamble(self,ue_id):
         # 模擬 UE隨機選取一個 Preamble (0 到 Z-1)
         chosen_preamble = np.random.randint(0, self.Z)
@@ -112,9 +121,14 @@ class UE:
         self.geo = wgs84.latlon(self.location[0], self.location[1])
     def acquire_visible_sat(self,sat_list,current_time_obj):
         self.visible_satellites = []
+        #counter = 1
         for sat in sat_list:
-            if is_visible(self.geo, sat.skyfield_sat, min_elevation=20, t=current_time_obj):
-                self.visible_satellites.append(sat)
+            if is_visible(self.geo, sat.skyfield_sat, min_elevation=20, t=current_time_obj): #所以這行是Bottleneck，當UE數量大就會變很慢。
+                self.visible_satellites.append(sat) #測試版，假設都只能看到衛星1-5，這強迫UCP assumption成立，作為固定變因
+            #counter += 1
+            #if counter > 10:
+             #  break
+
     def new_time(self,bursty):
         if self.active == True:
             self.delay += 1
@@ -129,7 +143,6 @@ class UE:
         self.active = True
         r = np.random.rand()
         self.budget = np.random.choice([1, 2, 3, 4, 5], p=self.QoS_requirement) #根據QoS需求隨機分配delay budget
-        #self.budget = 5 #其實這有點像是NACK重傳的次數限制，季報就先這樣講吧
         self.delay = 0
         self.target_satellite = None
     def acquire_SIB(self,ctrl):
@@ -144,7 +157,7 @@ class UE:
             backoff = True
         if not backoff:
             # 取得目前可見衛星在全體衛星集合中的 ID 
-            visible_ids = [sat.id for sat in self.visible_satellites]
+            visible_ids = [sat.id for sat in self.visible_satellites] 
             # 提取對應的分數並計算機率 a_{i,k}
             scores = np.array([self.S[k] for k in visible_ids])
             exp_S = np.exp(scores)
@@ -205,9 +218,9 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
     # 將真實衛星「封裝」進您的 Simulation Class
     sat_list = []
     for i, real_sat in enumerate(real_sats):
-        s = satellite(id=i, skyfield_sat=real_sat)
+        s = satellite(id=0, skyfield_sat=real_sat) #這裡不賦予id，因為後面會篩選可見衛星池，id會對不上，所以直接在satellite class裡面用list index當id。
         sat_list.append(s)
-        ctrl.add_satellite(s)
+        
     
     #print(f"Complete building environment: {len(sat_list)} satellites loaded.")
 
@@ -216,7 +229,7 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
         lat = 25.03 + np.random.uniform(-1, 1)
         lon = 121.56 + np.random.uniform(-1, 1)
         ue_list.append(UE(location=[lat, lon], id=i, rho=RHO))
-
+        
     # 建立Burst time table
     tb = 10000
     trao = 640
@@ -230,23 +243,56 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
     expected_tables = Load_estimator.precompute_expected_tables(Z=sat_list[0].Z, Nmax=1000) #預計算期望值表，傳入Z值和Nmax上限
     # 主模擬迴圈
     RAO_COUNTS = SECONDS * 1000 // trao  # 將秒數轉換成640ms的Slot數
+    active_sat_pool = []
+    for sat in sat_list:
+    #暫時用區域中心點的衛星仰角篩選一部份的衛星，允許的仰角閾值更加小因為只是初步篩選。
+        if is_visible(geo, sat.skyfield_sat, min_elevation=10, t=ts.from_datetime(start_dt)): #所以這行是Bottleneck，當UE數量大就會變很慢。
+            active_sat_pool.append(sat) #這些就是模擬中我們系統考慮的衛星池，後續不再更動。
+    print(f"Active Sat Pool Size: {len(active_sat_pool)}")
+ 
+    for i in range(len(active_sat_pool)):
+        sat = active_sat_pool[i]
+        ctrl.add_satellite(sat) #Controller只加入active_sat_pool裡的衛星
+        sat.assign_id(i) #為每個衛星分配新的ID
+
     for n in range(RAO_COUNTS): #統一用n，表示現在是在第幾個RAO
         # --- 更新時間與產生封包 ---
+        '''
         burst_idx = n*trao // tb #計算目前在哪個Burst period
         for ue in ue_list:
             burst_idx_ue = burst_idx*tb//trao + arrival_rao[burst_idx * NUM_UE + ue.id] #每個UE在每個Burst period都會有一個對應的bursty time
             ue.new_time(bursty=True if burst_idx_ue == n else False) #如果目前的Slot時間超過了該UE的bursty time，則產生新封包
+        '''
+        for ue in ue_list:
+            is_new_packet = np.random.rand() < (RHO * 1000 / trao)
+            ue.new_time(bursty=is_new_packet)
+        #'''
+
         # --- 衛星移動與可見衛星列表更新 ---
         if n % 5 == 0 or n == 1: #每5個RAO更新一次可見衛星列表，因為衛星移動不會太快
             current_ms = n * trao
             current_dt = start_dt + timedelta(milliseconds=current_ms)
             current_t = ts.from_datetime(current_dt)
             for ue in ue_list:
-                ue.acquire_visible_sat(sat_list, current_t)
+                ue.acquire_visible_sat(active_sat_pool, current_t)
         
+        real_counts = np.zeros(5)
+        idle_ue_count=0
+        for ue in ue_list:
+            if ue.active:
+                # 取得該 UE 剩餘的延遲預算 
+                nn = ue.budget - ue.delay
+                if nn > 0:
+                    real_counts[nn-1] += 1
+            else:
+                idle_ue_count += 1
+        
+        #real_counts[0] = idle_ue_count
+        ctrl.actualPi = real_counts / NUM_UE #更新真實pi供測試參考
         #Controller-side processing
         Lambda = ctrl.load_estimator(expected_tables) #每個RAO都呼叫一次load estimator，並且傳入預計算好的期望值表
-        ctrl.backoff_control(total_load=sum(Lambda), rho=ue_list[0].active_prob, p_d = ue_list[0].QoS_requirement, K=ctrl.sat_num, Z=sat_list[0].Z,MODE=MODE,n=n)
+        #if n % 10 == 0: #減少更新backoff control的頻率，讓系統有機會達到所需的穩態假設
+        ctrl.backoff_control(total_load=sum(Lambda), rho=(RHO * 1000 / trao), p_d = ue_list[0].QoS_requirement, K=ctrl.sat_num, Z=sat_list[0].Z,MODE=MODE,n=n)
         ctrl.satellite_selection(Lambda=Lambda) 
         current_n_hat = ctrl.N_estimate
         n_history.append(current_n_hat)
@@ -298,4 +344,4 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
     print(f"Total Dropped Packets: {total_lost_packets}")
     print(f"Average Throughput (packets/second): {avg_throughput:.2f}")
     print(f"Successful rate: {successesful_rate}")
-    return avg_throughput, successesful_rate, n_history
+    return avg_throughput, successesful_rate, n_history, ctrl.actual, ctrl.observe_pi
