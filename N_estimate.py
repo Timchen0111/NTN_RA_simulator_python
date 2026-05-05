@@ -1,5 +1,3 @@
-import numpy as np
-
 class RLSEstimator:
     def __init__(self, initial_N=0, P=10000, lam=0.995):
         """
@@ -19,7 +17,7 @@ class RLSEstimator:
         數學模型: Lambda = N * denominator
         """
         # phi 即為回歸量 (Regressor)
-        phi = denominator
+        phi = denominator #這對應到x(n) (Input signal)
         
         # 1. 計算增益 K (Gain)
         # 這裡 phi 在分子，代表當 denominator 越小(資訊越差)，K 就會自動變小
@@ -28,10 +26,10 @@ class RLSEstimator:
         
         # 2. 計算殘差 (Innovation / Error)
         # 比對「實際看到的流量」與「基於目前 N 預期應有的流量」
-        error = Lambda - (phi * self.N_tilde)
+        error = Lambda - (phi * self.N_tilde) #Lambda 對應到 d(n)
         
         # 3. 更新參數 N_tilde
-        self.N_tilde = self.N_tilde + K * error
+        self.N_tilde = self.N_tilde + K * error #N_tilde 對應到 w(n) Optimal weights
         
         # 4. 更新協方差 P (Ricatti Equation)
         # P 會隨著時間收縮，代表系統越來越「有信心」，更新步長會自動變慢

@@ -137,7 +137,7 @@ plt.tight_layout()
 plt.show()
 '''
 num = 10000
-a,b,c,d,e=main.main(0.05, 1, 200, num, 1, 1)
+a,b,c,d,e=main.main(0.05, 1, 500, num, 1, 1)
 plt.figure(figsize=(10, 6))
 plt.plot(range(len(c)), c, label='Estimated N (N_tilde)', color='blue', linewidth=1.5)
 plt.axhline(y=num, color='red', linestyle='--', label=f'True N ({num})') # 畫出真實值參考線

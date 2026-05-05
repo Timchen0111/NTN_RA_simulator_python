@@ -2,7 +2,7 @@ import numpy as np
 from skyfield.api import load, EarthSatellite, wgs84
 import orbit
 from datetime import datetime, timezone, timedelta  # 必須有 timedelta
-import Load_estimator, backoff_control, N_estimate
+import Load_estimator, backoff_control, N_estimate, selection
 
 class controller:
     def __init__(self):
@@ -14,9 +14,10 @@ class controller:
         self.S = []
         self.N_estimate = 0
         self.rls = N_estimate.RLSEstimator(initial_N=self.N_estimate)
-        #self.actualLambda=0
         self.actualPi = np.zeros(self.Dmax) #用來記錄每個pi的真實值，供測試參考
         self.actual = []
+    def set_agent(self):
+        self.agent = selection.SatelliteSelectionAgent(satellite_list=self.satellites, S_max=10, mem_length=5)
     def add_satellite(self, satellite):
         self.satellites.append(satellite)
         self.sat_num = len(self.satellites) 
@@ -48,22 +49,13 @@ class controller:
         #print(f"Backoff control updated: p_b={self.p_b}, pi={self.observe_pi}")
         return
     def satellite_selection(self,Lambda):
-        self.S = np.ones(self.sat_num) #temp
+        state = self.agent.get_state(Lambda)
+        self.S = self.agent.select_action(state, epsilon=0.05)
         return
     def N_estimation(self, Lambda, denominator):
-        #current_N = self.rls.update(Lambda, denominator)
-        current_N = Lambda/denominator if denominator > 0 else self.N_estimate #測試用
+        current_N = self.rls.update(Lambda, denominator)
+        #current_N = Lambda/denominator if denominator > 0 else self.N_estimate #測試用
         return current_N
-    '''
-    def N_estimationkkk(self, Lambda, denominator, N_old, n, a=0.1):
-        if denominator > 0 and n>0:
-            a = 1.0 / (n ** 0.8)
-            N_instant = Lambda / denominator
-            N_new = (1 - a) * N_old + a * N_instant
-        else:
-            N_new = N_old
-        return N_new
-    '''
     
 class satellite:
     def __init__(self, id, skyfield_sat, Z=54):
@@ -155,7 +147,7 @@ class UE:
         r= np.random.rand()
         if r < self.p_b[self.budget-self.delay-1]: # Backoff
             backoff = True
-        if not backoff:
+        if not backoff and len(self.visible_satellites) > 0:
             # 取得目前可見衛星在全體衛星集合中的 ID 
             visible_ids = [sat.id for sat in self.visible_satellites] 
             # 提取對應的分數並計算機率 a_{i,k}
@@ -254,6 +246,8 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
         sat = active_sat_pool[i]
         ctrl.add_satellite(sat) #Controller只加入active_sat_pool裡的衛星
         sat.assign_id(i) #為每個衛星分配新的ID
+    
+    ctrl.set_agent() #在加入衛星後初始化Agent，讓Agent知道目前的衛星列表和數量
 
     for n in range(RAO_COUNTS): #統一用n，表示現在是在第幾個RAO
         # --- 更新時間與產生封包 ---
