@@ -3,8 +3,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import random
+from collections import deque
 
-# --- RL_network.py 內容 ---
 class SimpleDQN(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(SimpleDQN, self).__init__()
@@ -17,43 +18,69 @@ class SimpleDQN(nn.Module):
         x = F.relu(self.fc2(x))
         return self.fc3(x)
 
-# --- Agent 整合類別 ---
 class SatelliteSelectionAgent:
     def __init__(self, satellite_list, S_max=10, mem_length=5):
         self.sat_num = len(satellite_list)
         self.S_max = S_max
         self.mem_length = mem_length
         
-        # 1. 定義維度 (對應論文中的 State 與 Action)
-        # State: 歷史負載 + 歷史分數 (每個時隙包含 2*sat_num 個數值)
+        # 修正維度定義：確保這裡是固定的
         self.state_dim = mem_length * (self.sat_num * 2) 
-        # Action: 離散化動作，例如每顆衛星可選擇 {分數-1, 不變, 分數+1}
         self.action_dim = self.sat_num * 3 
         
-        # 2. 初始化 DQN 網路與優化器
+        # 修正 2: 引入目標網路 (Target Network)
         self.policy_net = SimpleDQN(self.state_dim, self.action_dim)
+        self.target_net = SimpleDQN(self.state_dim, self.action_dim)
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+        
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=1e-3)
         
-        # 3. 狀態空間與目前分數
-        self.load_history = [] 
-        self.score_history = []
-        self.current_S = np.ones(self.sat_num) # 初始得分向量 S
+        # 修正 1: 經驗回放池 (Replay Buffer)
+        self.memory = deque(maxlen=2000)
+        self.batch_size = 32
+        
+        self.load_history = deque(maxlen=mem_length)
+        self.score_history = deque(maxlen=mem_length)
+        self.current_S = np.ones(self.sat_num)
+        self.steps_done = 0
 
     def get_state(self, current_load):
-        """
-        維護 FIFO 隊列並產生一維狀態向量
-        """
+        # 使用 deque 自動維護長度
         self.load_history.append(current_load)
         self.score_history.append(self.current_S.copy())
         
-        if len(self.load_history) > self.mem_length:
-            self.load_history.pop(0)
-            self.score_history.pop(0)
+        # 冷啟動處理：如果紀錄不夠長，前面補零
+        loads = list(self.load_history)
+        scores = list(self.score_history)
+        
+        while len(loads) < self.mem_length:
+            loads.insert(0, np.zeros(self.sat_num))
+            scores.insert(0, np.zeros(self.sat_num))
             
-        # 組合負載與分數歷史，對應論文 \mathcal{H}^{m-1}
-        state = np.hstack([np.array(self.load_history).flatten(), 
-                           np.array(self.score_history).flatten()])
+        state = np.hstack([np.array(loads).flatten(), 
+                           np.array(scores).flatten()])
+        
+        # 強制確認維度正確，否則報錯時會很清楚
+        assert state.shape[0] == self.state_dim, f"Dimension mismatch! Expected {self.state_dim}, got {state.shape[0]}"
         return state
+
+    def select_action(self, state, epsilon):  ##這是主要供main調用的程式  #使用 epsilon-greedy 策略選擇動作，epsilon需要隨時間衰減以平衡探索與利用
+        if np.random.rand() < epsilon:
+            action_idx = np.random.randint(self.action_dim)
+        else:
+            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            with torch.no_grad():
+                q_values = self.policy_net(state_tensor)
+                action_idx = torch.argmax(q_values).item()
+        
+        self._apply_action(action_idx)
+        return action_idx, self.current_S # 多回傳一個 idx 方便存入 memory
+
+    def _apply_action(self, action_idx):
+        target_sat_idx = action_idx // 3
+        adjustment = (action_idx % 3) - 1
+        self.current_S[target_sat_idx] += adjustment
+        self.current_S = np.clip(self.current_S, 1, self.S_max)
 
     def compute_reward(self, current_load):
         """
@@ -63,52 +90,36 @@ class SatelliteSelectionAgent:
         variance = np.mean((current_load - avg_load)**2)
         return -variance
 
-    def select_action(self, state, epsilon=0.1):
-        """
-        實現策略 Phi: Input State -> Output Score S
-        """
-        # Epsilon-greedy 策略用於exploration
-        if np.random.rand() < epsilon:
-            action_idx = np.random.randint(self.action_dim)
-        else:
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
-            with torch.no_grad():
-                q_values = self.policy_net(state_tensor)
-                action_idx = torch.argmax(q_values).item()
-        
-        # 將離散索引轉為分數更新
-        self._apply_action(action_idx)
-        return self.current_S
+    def store_transition(self, s, a, r, s_next):
+        self.memory.append((s, a, r, s_next))
 
-    def _apply_action(self, action_idx):
-        """
-        將神經網路輸出的 index 映射到具體的衛星分數調整
-        """
-        target_sat_idx = action_idx // 3
-        adjustment = (action_idx % 3) - 1 # 映射到 {-1, 0, 1}
+    def update_policy(self):
+        if len(self.memory) < self.batch_size:
+            return
         
-        self.current_S[target_sat_idx] += adjustment
-        # 限制分數在 [1, S_max] 區間
-        self.current_S = np.clip(self.current_S, 1, self.S_max)
-
-    def update_policy(self, state, action_idx, reward, next_state):
-        """
-        基本的 DQN 更新邏輯
-        """
-        state_t = torch.FloatTensor(state).unsqueeze(0)
-        next_state_t = torch.FloatTensor(next_state).unsqueeze(0)
-        reward_t = torch.FloatTensor([reward])
+        # 修正：從 Replay Buffer 隨機抽樣
+        batch = random.sample(self.memory, self.batch_size)
+        s, a, r, s_next = zip(*batch)
         
-        # 計算目前的 Q 值
-        current_q = self.policy_net(state_t)[0][action_idx]
+        s_t = torch.FloatTensor(np.array(s))
+        a_t = torch.LongTensor(np.array(a)).view(-1, 1)
+        r_t = torch.FloatTensor(np.array(r)).view(-1, 1)
+        s_next_t = torch.FloatTensor(np.array(s_next))
         
-        # 計算目標 Q 值 (簡化版：Reward + gamma * max_next_Q)
+        # 使用 policy_net 計算目前的 Q
+        current_q = self.policy_net(s_t).gather(1, a_t)
+        
+        # 使用 target_net 計算目標 Q
         with torch.no_grad():
-            max_next_q = torch.max(self.policy_net(next_state_t))
-            target_q = reward_t + 0.99 * max_next_q
+            max_next_q = self.target_net(s_next_t).max(1)[0].view(-1, 1)
+            target_q = r_t + 0.99 * max_next_q
             
-        # 更新權重 theta
         loss = F.mse_loss(current_q, target_q)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        
+        # 定期同步 Target Network
+        self.steps_done += 1
+        if self.steps_done % 100 == 0:
+            self.target_net.load_state_dict(self.policy_net.state_dict())

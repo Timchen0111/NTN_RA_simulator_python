@@ -39,7 +39,7 @@ class SatelliteEnv:
         return p_c, C, pi
 
 def backoff_control(N_tilde, last_p_b, rho, D, p_d, K, Z, MODE):
-    if MODE == 1:
+    if MODE != 3:
         env = SatelliteEnv(N_tilde, rho)
         def objective(p_b_vec):
             p_c, _, _ = env.solve_p_c(p_b_vec, D, p_d, K, Z)
@@ -51,7 +51,7 @@ def backoff_control(N_tilde, last_p_b, rho, D, p_d, K, Z, MODE):
         _, _, opt_pi = env.solve_p_c(opt_p_b, D, p_d, K, Z)
         return opt_p_b, opt_pi
     else:
-        # MODE 2: 固定 p_b 為 0，僅更新 pi
+        # MODE 3: 固定 p_b 為 0，僅更新 pi
         env = SatelliteEnv(N_tilde, rho)
         p_c, _, opt_pi = env.solve_p_c(np.zeros(D), D, p_d, K, Z)
         return np.zeros(D), opt_pi

@@ -16,12 +16,15 @@ class controller:
         self.rls = N_estimate.RLSEstimator(initial_N=self.N_estimate)
         self.actualPi = np.zeros(self.Dmax) #用來記錄每個pi的真實值，供測試參考
         self.actual = []
+        self.history_reward = []
     def set_agent(self):
         self.agent = selection.SatelliteSelectionAgent(satellite_list=self.satellites, S_max=10, mem_length=5)
+        self.last_state = None
+        self.last_action_idx = None
+        self.S = np.ones(len(self.satellites))
     def add_satellite(self, satellite):
         self.satellites.append(satellite)
         self.sat_num = len(self.satellites) 
-        self.S = np.ones(self.sat_num)
     def load_estimator(self, expected_tables):
         #取得衛星回報的 N_i, N_s, N_c
         N_i = np.zeros(self.sat_num)
@@ -48,9 +51,57 @@ class controller:
             self.actual.append(list(self.actualPi[:5]))
         #print(f"Backoff control updated: p_b={self.p_b}, pi={self.observe_pi}")
         return
-    def satellite_selection(self,Lambda):
-        state = self.agent.get_state(Lambda)
-        self.S = self.agent.select_action(state, epsilon=0.05)
+    def satellite_selection(self, Lambda,MODE,n):
+        reward = self.agent.compute_reward(Lambda)
+        self.history_reward.append(reward)
+        if MODE == 2 or MODE == 3:
+            return # MODE 2 和 MODE 3 不執行衛星選擇，S固定為1，也就是隨機選擇
+        if MODE == 4:
+            #實作簡單的基於負載的衛星選擇，分數與負載成反比
+            # 1. 取得負載的倒數（與負載成反比）
+            # 加入極小值 epsilon 防止除以零
+            eps = 1e-6
+            inv_lambda = 1.0 / (Lambda + eps)
+            # 2. 進行歸一化與縮放
+            # 將倒數關係映射到 [1, S_max] 區間
+            # 邏輯：負載最低的衛星拿 S_max，其餘依比例分配
+            max_inv = np.max(inv_lambda)
+            if max_inv > 0:
+                self.S = (inv_lambda / max_inv) * self.agent.S_max
+            # 3. 離散化並確保最小值為 1
+            self.S = np.round(np.clip(self.S, 1, self.agent.S_max))
+            if n % 10 == 0 and n>0:
+                print(f"Current Satellite Preference Score: {self.S}")
+                print(f"Current Reward: {reward}")
+            return 
+        # 1. 取得目前狀態 s_m (對應 H^m-1)
+        current_state = self.agent.get_state(Lambda)
+        # 2. 學習階段：利用「當下觀測到的 Lambda」來評價「上一回合做的決定」
+        if self.last_state is not None:
+            # 計算上一回合動作 a_{m-1} 產生的獎勵 r_{m-1}
+            reward = self.agent.compute_reward(Lambda)
+            # 將 (s_{m-1}, a_{m-1}, r_{m-1}, s_m) 存入經驗池
+            self.agent.store_transition(
+                self.last_state, 
+                self.last_action_idx, 
+                reward, 
+                current_state
+            )
+            # 觸發神經網路優化 (update theta)
+            self.agent.update_policy()
+        # 3. 決策階段：決定這一回合要使用的動作 a_m 與分數向量 S_m
+        # 這裡會用到 epsilon-greedy，產出 action_idx 用於未來學習
+        now_ep = max(0.05, 0.5 - 0.005*n) #linearly 隨時間衰減 epsilon，從0.5開始，每20個RAO減少0.1，最低到0.05
+        action_idx, current_S = self.agent.select_action(current_state, epsilon=now_ep)
+        # 4. 紀錄目前的資訊，供下一輪 (m+1) 學習使用
+        self.last_state = current_state
+        self.last_action_idx = action_idx
+        self.S = current_S
+        if len(self.S) != self.sat_num:
+            raise ValueError(f"Warning: S length {len(self.S)} does not match number of satellites {self.sat_num}.")
+        if n % 10 == 0 and n>0:
+            print(f"Current Satellite Preference Score: {self.S}")
+            print(f"Current Reward: {reward}")
         return
     def N_estimation(self, Lambda, denominator):
         current_N = self.rls.update(Lambda, denominator)
@@ -223,12 +274,12 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
         ue_list.append(UE(location=[lat, lon], id=i, rho=RHO))
         
     # 建立Burst time table
-    tb = 10000
-    trao = 640
-    burst_count = SECONDS*1000//tb
-    samples = np.random.beta(3, 4, burst_count * NUM_UE) #每個UE在每次Burst period都會產生一個bursty time
-    arrival_times = samples * tb  #將樣本轉換成毫秒，並且分布在每個Burst period的0到tb秒之間
-    arrival_rao  = arrival_times//trao #離散化，算出burst在第幾個RAO index
+    #tb = 10000
+    trao = 100
+    #burst_count = SECONDS*1000//tb
+    #samples = np.random.beta(3, 4, burst_count * NUM_UE) #每個UE在每次Burst period都會產生一個bursty time
+    #arrival_times = samples * tb  #將樣本轉換成毫秒，並且分布在每個Burst period的0到tb秒之間
+    #arrival_rao  = arrival_times//trao #離散化，算出burst在第幾個RAO index
     # 數據收集用的 List
     throughput_history = [] # 記錄每個 Slot 的成功數
     n_history = [] # 記錄每個 Slot 的 N_estimate
@@ -267,9 +318,15 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
             current_ms = n * trao
             current_dt = start_dt + timedelta(milliseconds=current_ms)
             current_t = ts.from_datetime(current_dt)
+            visible_count = 0
             for ue in ue_list:
                 ue.acquire_visible_sat(active_sat_pool, current_t)
-        
+                visible_count += len(ue.visible_satellites)
+            avg_visible = visible_count / NUM_UE
+            print(f"RAO {n}: Average visible satellites per UE: {avg_visible:.2f}")
+            if avg_visible < 1:
+                print("Warning: Too few visible satellites on average. The simulation scenario is not feasible. Ending simulation.")
+                return
         real_counts = np.zeros(5)
         idle_ue_count=0
         for ue in ue_list:
@@ -287,7 +344,7 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
         Lambda = ctrl.load_estimator(expected_tables) #每個RAO都呼叫一次load estimator，並且傳入預計算好的期望值表
         #if n % 10 == 0: #減少更新backoff control的頻率，讓系統有機會達到所需的穩態假設
         ctrl.backoff_control(total_load=sum(Lambda), rho=(RHO * 1000 / trao), p_d = ue_list[0].QoS_requirement, K=ctrl.sat_num, Z=sat_list[0].Z,MODE=MODE,n=n)
-        ctrl.satellite_selection(Lambda=Lambda) 
+        ctrl.satellite_selection(Lambda=Lambda,MODE=MODE, n=n)
         current_n_hat = ctrl.N_estimate
         n_history.append(current_n_hat)
         
@@ -338,4 +395,4 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
     print(f"Total Dropped Packets: {total_lost_packets}")
     print(f"Average Throughput (packets/second): {avg_throughput:.2f}")
     print(f"Successful rate: {successesful_rate}")
-    return avg_throughput, successesful_rate, n_history, ctrl.actual, ctrl.observe_pi
+    return avg_throughput, successesful_rate, n_history, ctrl.actual, ctrl.observe_pi, ctrl.history_reward
