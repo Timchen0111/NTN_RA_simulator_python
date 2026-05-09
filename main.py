@@ -70,7 +70,7 @@ class controller:
                 self.S = (inv_lambda / max_inv) * self.agent.S_max
             # 3. 離散化並確保最小值為 1
             self.S = np.round(np.clip(self.S, 1, self.agent.S_max))
-            if n % 10 == 0 and n>0:
+            if n % 5 == 0 and n>0:
                 print(f"Current Satellite Preference Score: {self.S}")
                 print(f"Current Reward: {reward}")
             return 
@@ -289,7 +289,8 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
     active_sat_pool = []
     for sat in sat_list:
     #暫時用區域中心點的衛星仰角篩選一部份的衛星，允許的仰角閾值更加小因為只是初步篩選。
-        if is_visible(geo, sat.skyfield_sat, min_elevation=10, t=ts.from_datetime(start_dt)): #所以這行是Bottleneck，當UE數量大就會變很慢。
+        mid_dt = start_dt + timedelta(seconds=SECONDS/2)
+        if is_visible(geo, sat.skyfield_sat, min_elevation=10, t=ts.from_datetime(mid_dt)): #所以這行是Bottleneck，當UE數量大就會變很慢。改成模擬時間中點，模擬日昇日落而非一直日落
             active_sat_pool.append(sat) #這些就是模擬中我們系統考慮的衛星池，後續不再更動。
     print(f"Active Sat Pool Size: {len(active_sat_pool)}")
  
@@ -319,11 +320,17 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
             current_dt = start_dt + timedelta(milliseconds=current_ms)
             current_t = ts.from_datetime(current_dt)
             visible_count = 0
+            sat_visibility_counts = np.zeros(len(active_sat_pool))
             for ue in ue_list:
                 ue.acquire_visible_sat(active_sat_pool, current_t)
                 visible_count += len(ue.visible_satellites)
+                for sat in ue.visible_satellites:
+                    sat_visibility_counts[sat.id] += 1
+            # 計算變異係數 (CV)，衡量衛星間潛在競爭壓力的不均勻性
+            cv_visibility = np.std(sat_visibility_counts) / np.mean(sat_visibility_counts)
             avg_visible = visible_count / NUM_UE
             print(f"RAO {n}: Average visible satellites per UE: {avg_visible:.2f}")
+            print(f"RAO {n}: Coefficient of Variation for Satellite Visibility: {cv_visibility:.2f}")
             if avg_visible < 1:
                 print("Warning: Too few visible satellites on average. The simulation scenario is not feasible. Ending simulation.")
                 return

@@ -37,7 +37,7 @@ class SatelliteSelectionAgent:
         
         # 修正 1: 經驗回放池 (Replay Buffer)
         self.memory = deque(maxlen=2000)
-        self.batch_size = 32
+        self.batch_size = 32 #這個可以調大
         
         self.load_history = deque(maxlen=mem_length)
         self.score_history = deque(maxlen=mem_length)
