@@ -18,7 +18,7 @@ class controller:
         self.actual = []
         self.history_reward = []
     def set_agent(self):
-        self.agent = selection.SatelliteSelectionAgent(satellite_list=self.satellites, S_max=10, mem_length=5)
+        self.agent = selection.SatelliteSelectionAgent(satellite_list=self.satellites, S_max=5, mem_length=5)
         self.last_state = None
         self.last_action_idx = None
         self.S = np.ones(len(self.satellites))
@@ -47,35 +47,48 @@ class controller:
         #N_tilde = 10000 #丟真值測試用
         self.p_b, self.observe_pi = backoff_control.backoff_control(N_tilde, self.p_b, rho, self.Dmax, p_d, K, Z,MODE)
         if n % 10 == 0:
-            print(f"Actual Pi: {self.actualPi}, Observed Pi: {self.observe_pi}")
+            #print(f"Actual Pi: {self.actualPi}, Observed Pi: {self.observe_pi}")
             self.actual.append(list(self.actualPi[:5]))
         #print(f"Backoff control updated: p_b={self.p_b}, pi={self.observe_pi}")
         return
-    def satellite_selection(self, Lambda,MODE,n):
+    def baseline_score(self, Lambda,n):
+        #實作簡單的基於負載的衛星選擇，分數與負載成反比
+        # 1. 取得負載的倒數（與負載成反比）
+        eps = 10 #Avoid 0 exploration
+        inv_lambda = 1.0 / (Lambda + eps)
+        # 2. 進行歸一化與縮放
+        # 將倒數關係映射到 [1, S_max] 區間
+        # 邏輯：負載最低的衛星拿 S_max，其餘依比例分配
+        max_inv = np.max(inv_lambda)
+        if max_inv > 0:
+            S = (inv_lambda / max_inv) * self.agent.S_max
+            # 3. 離散化並確保最小值為 1
+        S = np.round(np.clip(S, 1, self.agent.S_max))
+        return S 
+    def satellite_selection(self, Lambda,MODE,n,target_location,t):
         reward = self.agent.compute_reward(Lambda)
         self.history_reward.append(reward)
         if MODE == 2 or MODE == 3:
-            return # MODE 2 和 MODE 3 不執行衛星選擇，S固定為1，也就是隨機選擇
-        if MODE == 4:
-            #實作簡單的基於負載的衛星選擇，分數與負載成反比
-            # 1. 取得負載的倒數（與負載成反比）
-            # 加入極小值 epsilon 防止除以零
-            eps = 1e-6
-            inv_lambda = 1.0 / (Lambda + eps)
-            # 2. 進行歸一化與縮放
-            # 將倒數關係映射到 [1, S_max] 區間
-            # 邏輯：負載最低的衛星拿 S_max，其餘依比例分配
-            max_inv = np.max(inv_lambda)
-            if max_inv > 0:
-                self.S = (inv_lambda / max_inv) * self.agent.S_max
-            # 3. 離散化並確保最小值為 1
-            self.S = np.round(np.clip(self.S, 1, self.agent.S_max))
-            if n % 5 == 0 and n>0:
+            if n % 50 == 0 and n>0:
+                #print(f"Lambda:{Lambda}")
                 print(f"Current Satellite Preference Score: {self.S}")
                 print(f"Current Reward: {reward}")
-            return 
+            return # MODE 2 和 MODE 3 不執行衛星選擇，S固定為1，也就是隨機選擇
+        if MODE == 4:
+            self.S = self.baseline_score(Lambda,n) # MODE 4 直接使用啟發式分數，不進行 RL 微調
+            if n % 50 == 0 and n>0:
+                print(f"Current Satellite Preference Score: {self.S}")
+                print(f"Current Reward: {reward}")
+            return
         # 1. 取得目前狀態 s_m (對應 H^m-1)
-        current_state = self.agent.get_state(Lambda)
+        angle = np.zeros(self.sat_num)
+        if MODE == 1:
+            baseline_score = None
+        else:
+            baseline_score = self.baseline_score(Lambda,n) #mode 5: reward shaping，讓 RL 主要學習微調分數而非從零開始
+        for i in range(self.sat_num):
+            angle[i] = self.satellites[i].calculate_elevation_angle(target_location, t)
+        current_state = self.agent.get_state(Lambda,angle)
         # 2. 學習階段：利用「當下觀測到的 Lambda」來評價「上一回合做的決定」
         if self.last_state is not None:
             # 計算上一回合動作 a_{m-1} 產生的獎勵 r_{m-1}
@@ -92,14 +105,14 @@ class controller:
         # 3. 決策階段：決定這一回合要使用的動作 a_m 與分數向量 S_m
         # 這裡會用到 epsilon-greedy，產出 action_idx 用於未來學習
         now_ep = max(0.05, 0.5 - 0.005*n) #linearly 隨時間衰減 epsilon，從0.5開始，每20個RAO減少0.1，最低到0.05
-        action_idx, current_S = self.agent.select_action(current_state, epsilon=now_ep)
+        action_idx, current_S = self.agent.select_action(current_state, epsilon=now_ep, S_heuristic=baseline_score)
         # 4. 紀錄目前的資訊，供下一輪 (m+1) 學習使用
         self.last_state = current_state
         self.last_action_idx = action_idx
         self.S = current_S
         if len(self.S) != self.sat_num:
             raise ValueError(f"Warning: S length {len(self.S)} does not match number of satellites {self.sat_num}.")
-        if n % 10 == 0 and n>0:
+        if n % 50 == 0 and n>0:
             print(f"Current Satellite Preference Score: {self.S}")
             print(f"Current Reward: {reward}")
         return
@@ -124,6 +137,11 @@ class satellite:
         # 模擬 UE隨機選取一個 Preamble (0 到 Z-1)
         chosen_preamble = np.random.randint(0, self.Z)
         self.ue_pre[ue_id] = chosen_preamble
+    def calculate_elevation_angle(self,target_location,t):
+        difference = self.skyfield_sat - target_location
+        topocentric = difference.at(t)
+        alt, az, distance = topocentric.altaz()
+        return alt.degrees
     def check_RA_success(self):
         seen_values = set()
         duplicates = set()
@@ -236,6 +254,53 @@ def is_visible(UE_location, satellite, min_elevation,t):
     alt, az, distance = topocentric.altaz()
     return alt.degrees > min_elevation
 
+def evaluate_visibility_heterogeneity(ue_list, num_samples=100):
+    """
+    評估 UE 可見衛星集合的異質性
+    :param ue_list: 當前時隙的所有 UE 列表
+    :param num_samples: 隨機採樣的對數，避免全量計算（O(N^2)）導致效能崩潰
+    """
+    if len(ue_list) < 2:
+        return {"jaccard": 1.0, "unique_ratio": 0.0, "cv": 0.0}
+
+    # 1. 計算 Jaccard Similarity (量化重疊度)
+    jaccard_indices = []
+    # 限制採樣數以提升速度
+    pairs = [np.random.choice(ue_list, 2, replace=False) for _ in range(min(num_samples, len(ue_list)//2))]
+    
+    for u1, u2 in pairs:
+        set1 = set(s.id for s in u1.visible_satellites)
+        set2 = set(s.id for s in u2.visible_satellites)
+        
+        union = set1.union(set2)
+        if len(union) == 0:
+            continue
+        
+        intersection = set1.intersection(set2)
+        jaccard_indices.append(len(intersection) / len(union))
+    
+    avg_jaccard = np.mean(jaccard_indices) if jaccard_indices else 1.0
+
+    # 2. 統計每顆衛星被看見的次數 (量化空間壓力分佈)
+    # 假設所有可能的衛星 ID 已經在 active_sat_pool 中
+    sat_appearance = {}
+    for ue in ue_list:
+        for sat in ue.visible_satellites:
+            sat_appearance[sat.id] = sat_appearance.get(sat.id, 0) + 1
+    
+    # 計算變異係數 (CV)
+    counts = list(sat_appearance.values())
+    cv = np.std(counts) / np.mean(counts) if counts else 0.0
+    
+    # 3. 統計全體 UE 覆蓋的獨特衛星總數
+    unique_sats = len(sat_appearance.keys())
+
+    return {
+        "avg_jaccard": avg_jaccard, # 越小代表 UE 看到的星越不一樣 (RL 更有利)
+        "cv_visibility": cv,       # 越大代表衛星間壓力越不均 (選星越重要)
+        "total_unique_sats": unique_sats # 系統當前總共利用了幾顆衛星
+    }
+
 def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
@@ -268,9 +333,30 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
     #print(f"Complete building environment: {len(sat_list)} satellites loaded.")
 
     ue_list = []
+    '''
     for i in range(NUM_UE):
         lat = 25.03 + np.random.uniform(-1, 1)
         lon = 121.56 + np.random.uniform(-1, 1)
+        ue_list.append(UE(location=[lat, lon], id=i, rho=RHO))
+    
+    centers = [
+        [25.03, 121.56], 
+        [24.14, 120.67]
+    ]
+    '''
+    for i in range(NUM_UE):
+        # 隨機決定該 UE 屬於哪一個熱點群體 (各占 50%) 暫時關掉
+        c = [25.03, 121.56] #centers[np.random.choice([0, 1])]
+        
+        # 使用立方變換製造聚集效應
+        # 我們將偏移量限制在 +-1.5 之間，再取立方以強化核心密集度
+        raw_lat_offset = np.random.uniform(-2, 2)
+        raw_lon_offset = np.random.uniform(-2, 2)
+        
+        # 立方變換：(offset^3) / 2.25 確保範圍大致維持在原有尺度，但極度集中
+        lat = c[0] + (raw_lat_offset ** 3) / 2.25
+        lon = c[1] + (raw_lon_offset ** 3) / 2.25
+        
         ue_list.append(UE(location=[lat, lon], id=i, rho=RHO))
         
     # 建立Burst time table
@@ -314,11 +400,11 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
             ue.new_time(bursty=is_new_packet)
         #'''
 
+        current_ms = n * trao
+        current_dt = start_dt + timedelta(milliseconds=current_ms)
+        current_t = ts.from_datetime(current_dt)
         # --- 衛星移動與可見衛星列表更新 ---
         if n % 5 == 0 or n == 1: #每5個RAO更新一次可見衛星列表，因為衛星移動不會太快
-            current_ms = n * trao
-            current_dt = start_dt + timedelta(milliseconds=current_ms)
-            current_t = ts.from_datetime(current_dt)
             visible_count = 0
             sat_visibility_counts = np.zeros(len(active_sat_pool))
             for ue in ue_list:
@@ -329,11 +415,15 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
             # 計算變異係數 (CV)，衡量衛星間潛在競爭壓力的不均勻性
             cv_visibility = np.std(sat_visibility_counts) / np.mean(sat_visibility_counts)
             avg_visible = visible_count / NUM_UE
-            print(f"RAO {n}: Average visible satellites per UE: {avg_visible:.2f}")
-            print(f"RAO {n}: Coefficient of Variation for Satellite Visibility: {cv_visibility:.2f}")
+            if n % 50 == 0 and n>0:
+                print(f"RAO {n}: Average visible satellites per UE: {avg_visible:.2f}")
+                print(f"RAO {n}: Coefficient of Variation for Satellite Visibility: {cv_visibility:.2f}")
             if avg_visible < 1:
                 print("Warning: Too few visible satellites on average. The simulation scenario is not feasible. Ending simulation.")
                 return
+            if MODE == 0: #測試模式，不是真的跑模擬
+                eval_metrics = evaluate_visibility_heterogeneity(ue_list)
+                return eval_metrics
         real_counts = np.zeros(5)
         idle_ue_count=0
         for ue in ue_list:
@@ -351,11 +441,12 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
         Lambda = ctrl.load_estimator(expected_tables) #每個RAO都呼叫一次load estimator，並且傳入預計算好的期望值表
         #if n % 10 == 0: #減少更新backoff control的頻率，讓系統有機會達到所需的穩態假設
         ctrl.backoff_control(total_load=sum(Lambda), rho=(RHO * 1000 / trao), p_d = ue_list[0].QoS_requirement, K=ctrl.sat_num, Z=sat_list[0].Z,MODE=MODE,n=n)
-        ctrl.satellite_selection(Lambda=Lambda,MODE=MODE, n=n)
+        ctrl.satellite_selection(Lambda=Lambda,MODE=MODE, n=n, target_location=geo, t=current_t)
         current_n_hat = ctrl.N_estimate
         n_history.append(current_n_hat)
+        print("Successfully completed one round of controller processing.")
         
-        if n % 10 == 0:
+        if n % 50 == 0:
             print(f"Current N_tilde: {ctrl.N_estimate}, Total Load (Lambda): {sum(Lambda)}, Backoff rate: {ctrl.p_b}", end='\n')
 
         for ue in ue_list:

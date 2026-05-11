@@ -136,7 +136,7 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 '''
-
+'''
 #MODE說明：1.backoff control + satellite selection 2.只有backoff control 3.兩者都沒有
 
 import matplotlib.pyplot as plt
@@ -144,14 +144,15 @@ import numpy as np
 
 # --- 模擬運行與數據收集 ---
 num = 10000
-modes = [2, 4]
+modes = [1, 2, 4]
 results = {}
 true_pi = None
 
 for m in modes:
-    # 執行 main.main 並取得回傳值
+    # 執行 main.main 並取得回傳值 def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
     # a: 最終負載, b: 成功率, c: N_tilde 歷史, d: Pi 歷史, e: 真實 Pi, f: reward 歷史
-    a, b, c, d, e, f = main.main(0.01, 1, 50, num, m, 42)
+    print(f'Current Mode:{m}')
+    a, b, c, d, e, f = main.main(0.01, 3, 100, num, m, 42)
     results[m] = {'N_tilde': c, 'Pi': d, 'Loads': a, 'SuccessRate': b, 'Reward': f}
     true_pi = e  # 紀錄基準真實值
 
@@ -161,7 +162,7 @@ plt.axhline(y=num, color='black', linestyle='--', label=f'True N ({num})', alpha
 
 # 定義不同模式的樣式
 configs = {
-    #1: {'label': 'MODE 1: RL + Backoff', 'color': 'blue'},
+    1: {'label': 'MODE 1: RL + Backoff', 'color': 'blue'},
     2: {'label': 'MODE 2: Backoff Only', 'color': 'green'},
     #3: {'label': 'MODE 3: No Control', 'color': 'red'},
     4: {'label': 'MODE 4: SimpleHeuristic + Backoff', 'color': 'orange'}
@@ -200,8 +201,8 @@ plt.show()
 # 假設 a: 成功次數, b: 碰撞率 (模擬結束後計算的平均值)
 #modes_list = ['MODE 1', 'MODE 2', 'MODE 3', 'MODE 4']
 #success_rates = [results[m]['SuccessRate'] for m in [1, 2, 3, 4]]
-modes_list = ['MODE 2', 'MODE 4']
-success_rates = [results[m]['SuccessRate'] for m in [2, 4]]
+modes_list = ['MODE 1', 'MODE 2', 'MODE 4']
+success_rates = [results[m]['SuccessRate'] for m in [1, 2, 4]]
 
 fig, ax1 = plt.subplots(figsize=(10, 6))
 
@@ -235,12 +236,12 @@ import numpy as np
 
 # --- 模擬運行與數據收集 (僅針對 MODE 1) ---
 num = 10000
-m = 1 # 僅跑 MODE 1: RL + Backoff
+m = 4 # 僅跑 MODE 1: RL + Backoff
 results = {}
 
 # a: 最終負載, b: 成功率, c: N_tilde 歷史, d: Pi 歷史, e: 真實 Pi, f: reward 歷史
 # 建議將 RAO 週期從 640ms 調小 (例如 100ms) 以增加 Episode 內的採樣點
-a, b, c, d, e, f = main.main(0.01, 1, 100, num, m, 42)
+a, b, c, d, e, f = main.main(0.01, 4, 20, num, m, 42)
 results[m] = {
     'N_tilde': c, 
     'Pi': d, 
@@ -293,6 +294,5 @@ plt.grid(True, alpha=0.3)
 plt.legend()
 plt.show()
 
-print(f"--- MODE 1 Test Complete ---")
+print(f"--- Test Complete ---")
 print(f"Final Success Rate: {results[m]['SuccessRate']:.4f}")
-'''
