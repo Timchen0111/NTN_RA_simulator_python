@@ -38,8 +38,8 @@ class SatelliteEnv:
             p_c = new_p_c
         return p_c, C, pi
 
-def backoff_control(N_tilde, last_p_b, rho, D, p_d, K, Z, MODE):
-    if MODE != 3:
+def backoff_control(N_tilde, last_p_b, rho, D, p_d, K, Z, MODE, Lambda):
+    if MODE != 3 and MODE != 7:
         env = SatelliteEnv(N_tilde, rho)
         def objective(p_b_vec):
             p_c, _, _ = env.solve_p_c(p_b_vec, D, p_d, K, Z)
@@ -51,10 +51,12 @@ def backoff_control(N_tilde, last_p_b, rho, D, p_d, K, Z, MODE):
         _, _, opt_pi = env.solve_p_c(opt_p_b, D, p_d, K, Z)
         return opt_p_b, opt_pi
     else:
-        # MODE 3: 固定 p_b 為 0，僅更新 pi
+        # MODE 3 or MODE 7: 使用非狀態依賴的固定 backoff probability
         env = SatelliteEnv(N_tilde, rho)
-        p_c, _, opt_pi = env.solve_p_c(np.zeros(D), D, p_d, K, Z)
-        return np.zeros(D), opt_pi
+        backoff_prob = Lambda / (K * Z)  # Non-state dependent backoff probability
+        backoff =  backoff_prob * np.ones(D)  # 所有 delay budget 使用相同的 backoff probability
+        p_c, _, opt_pi = env.solve_p_c(backoff, D, p_d, K, Z)
+        return backoff, opt_pi
 
 def get_loss(p_b, p_c, p_d_arr, D):
     L = 0.0

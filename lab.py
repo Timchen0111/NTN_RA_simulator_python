@@ -1,71 +1,7 @@
 import numpy as np
 import Load_estimator as l
-import main
+import old as main
 import matplotlib.pyplot as plt
-'''
-# 引用先前定義的函數
-# precompute_expected_tables, load_estimator
-
-def test_mom_performance():
-    # --- 1. 設定測試參數 ---
-    Z = 54           # 前導碼總數
-    Nmax = 1000       # 估計搜尋上限
-    test_lambdas = np.arange(1, 401, 10)  # 測試負載從 1 到 400，每隔 10 點取樣
-    num_trials = 50   # 每個負載點重複實驗次數，以取得平均表現
-    
-    # 預計算理論表
-    tables = l.precompute_expected_tables(Z, Nmax)
-    
-    ground_truth = []
-    estimations = []
-
-    print(f"Start to test MoM Estimator (Z={Z}, Nmax={Nmax})...")
-
-    # --- 2. 執行模擬測試 ---
-    for true_lambda in test_lambdas:
-        trial_estimates = []
-        for _ in range(num_trials):
-            # 模擬隨機接入過程：每個 UE 隨機選一個 preamble
-            # 產生 true_lambda 個隨機整數，範圍 [0, Z-1]
-            selections = np.random.randint(0, Z, size=true_lambda)
-            
-            # 計算觀測值 N_i, N_s, N_c
-            counts = np.bincount(selections, minlength=Z)
-            n_i = np.sum(counts == 0)
-            n_s = np.sum(counts == 1)
-            n_c = np.sum(counts > 1)
-            
-            # 執行估計 (包裝成 array 格式以符合函數輸入)
-            hat_lambda = l.load_estimator(np.array([n_i]), np.array([n_s]), np.array([n_c]), tables)
-            trial_estimates.append(hat_lambda[0])
-            
-        ground_truth.append(true_lambda)
-        estimations.append(np.mean(trial_estimates))
-
-    # --- 3. 計算誤差指標 ---
-    ground_truth = np.array(ground_truth)
-    estimations = np.array(estimations)
-    mae = np.mean(np.abs(ground_truth - estimations))
-    
-    print(f"Complete! MAE: {mae:.2f}")
-
-    # --- 4. 繪製結果圖表 ---
-    plt.figure(figsize=(10, 6))
-    plt.plot(ground_truth, ground_truth, 'r--', label='Ideal (Ground Truth)')
-    plt.scatter(ground_truth, estimations, color='blue', label='MoM Estimation')
-    plt.xlabel('True Load (Number of UEs)')
-    plt.ylabel('Estimated Load (Lambda Hat)')
-    plt.title('MoM Estimator Performance Analysis')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
-# 執行測試
-if __name__ == "__main__":
-    test_mom_performance()
-}
-
-'''
 '''
 # 1. 設定實驗參數
 rho = [0.2,0.4,0.6] 
@@ -136,119 +72,149 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 '''
-'''
-#MODE說明：1.backoff control + satellite selection 2.只有backoff control 3.兩者都沒有
 
+'''
+MODE說明
+MODE1: RL + backoff (Proposed scheme)
+MODE2: backoff only (With same satellite selection score)
+MODE3: Baseline: No Satellite Selection, Non-state dependent backoff
+MODE4: Heuristic satellite selection + backoff
+MODE5: Iterative RL training and MODE4
+MODE6: backoff + IDEAL SCENARIO, same visibility for all UEs, same satellite selection score
+MODE7: Non-state dependent backoff + IDEAL SCENARIO, same visibility for all UEs, same satellite selection score
+'''
+'''
 import matplotlib.pyplot as plt
 import numpy as np
 
 # --- 模擬運行與數據收集 ---
 num = 10000
-modes = [1, 2, 4]
+parameter_set = [[3,3,0.01],[4,3,0.01],[6,19,0.01]]  #Mode,軌道面數量/可見衛星數量
 results = {}
 true_pi = None
 
-for m in modes:
-    # 執行 main.main 並取得回傳值 def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED):
-    # a: 最終負載, b: 成功率, c: N_tilde 歷史, d: Pi 歷史, e: 真實 Pi, f: reward 歷史
-    print(f'Current Mode:{m}')
-    a, b, c, d, e, f = main.main(0.01, 3, 100, num, m, 42)
-    results[m] = {'N_tilde': c, 'Pi': d, 'Loads': a, 'SuccessRate': b, 'Reward': f}
-    true_pi = e  # 紀錄基準真實值
+for i in range(len(parameter_set)):
+    # 執行 main.main 並取得回傳值 
+    # 注意：這裡的引數必須與你的 main 函式定義嚴格對齊
+    # 傳入目前的軌道面數量 i，固定模式 m (建議先固定為舊版或特定模式進行變因隔離)
+    a, b, c, d, e, f, g = main.main(parameter_set[i][2], parameter_set[i][1],30, num, parameter_set[i][0], 42, 50)
+    results[i] = {
+        'N_tilde': c, 
+        'Pi': d, 
+        'Loads': a, 
+        'PLR': b, 
+        'True_Pi': e,  # 將每一組實驗各自的 True Pi 存下來，因為衛星數變了，理論 True Pi 也會變
+        'Reward': f
+    }
 
-# --- 圖表 1：人口估計收斂比較 (N_tilde) ---
+# 為不同的軌道面數量動態產生顏色對比 (使用 colormap 讓圖表更專業)
+colors = plt.cm.viridis(np.linspace(0, 0.8, len(parameter_set)))
+orbit_configs = {i: {'color': colors[idx]} for idx, i in enumerate(range(len(parameter_set)))}
+
+
+# --- 圖表 1：不同軌道面數量下的人口估計收斂比較 (N_tilde) ---
 plt.figure(figsize=(10, 6))
+# 真實的總用戶數依然是固定的基準線
 plt.axhline(y=num, color='black', linestyle='--', label=f'True N ({num})', alpha=0.6)
 
-# 定義不同模式的樣式
-configs = {
-    1: {'label': 'MODE 1: RL + Backoff', 'color': 'blue'},
-    2: {'label': 'MODE 2: Backoff Only', 'color': 'green'},
-    #3: {'label': 'MODE 3: No Control', 'color': 'red'},
-    4: {'label': 'MODE 4: SimpleHeuristic + Backoff', 'color': 'orange'}
-}
-
-for m in modes:
-    plt.plot(range(len(results[m]['N_tilde'])), results[m]['N_tilde'], 
-             label=configs[m]['label'], color=configs[m]['color'], linewidth=1.5)
-
-plt.title('Population Estimation Convergence (N_tilde) - Comparison')
+# 將集合 {} 改為列表 []，確保索引 i 能正確對應
+#labels = ['Real Satellite Scenario, rho = 0.01', 'Real Satellite Scenario, rho = 0.005', 'Ideal Case: Uniform Visibility, rho = 0.01', 'Ideal Case: Uniform Visibility, rho = 0.005']
+labels = ['Non-state dependent Backoff (Real Satellite)', 'Real Satellite Scenario', 'Ideal Case: Uniform Visibility']
+for i in range(len(parameter_set)):
+    plt.plot(range(len(results[i]['N_tilde'])), results[i]['N_tilde'], 
+             label=labels[i], color=orbit_configs[i]['color'], linewidth=1.5)
 plt.xlabel('Time Slot (n)')
 plt.ylabel('Estimated Population')
 plt.grid(True, alpha=0.3)
 plt.legend()
+plt.tight_layout()
 plt.show()
 
-# --- 圖表 2：狀態分佈比較 (以特定 State 為例，例如 State 0) ---
-# 若要畫出所有模式的 Pi 比較，通常建議選取最關鍵的 State (如 Idle 或 Collision)
+
+# --- 圖表 2：不同軌道面數量下的 Pi 估計絕對誤差比較 (以 State 0 為例) ---
 plt.figure(figsize=(10, 6))
-target_state = 0 # 假設我們觀察 State 0 的收斂情況
-plt.axhline(y=true_pi[target_state], color='black', linestyle='--', 
-            label=f'True Pi_{target_state}', alpha=0.6)
+target_state = 0  # 觀察 State 0 (Idle)
 
-for m in modes:
-    data_matrix = np.array(results[m]['Pi'])
-    plt.plot(range(len(data_matrix)), data_matrix[:, target_state], 
-             label=configs[m]['label'], color=configs[m]['color'], linewidth=1.5)
+for i in range(len(parameter_set)):
+    data_matrix = np.array(results[i]['Pi'])         # 模擬中估計的 Observed Pi 歷史紀錄
+    current_true_pi = results[i]['True_Pi']          # 該配置下的系統真實 True Pi 固定值
+    
+    # 計算每個 Time Slot 的絕對誤差：|Observed_Pi - True_Pi|
+    estimation_error = np.abs(data_matrix[:, target_state] - current_true_pi[target_state])
+    
+    # 修正重點：改用列表，並移除重複的 color 與 linewidth 參數
+    plt.plot(range(len(estimation_error)), estimation_error, 
+             label=labels[i], color=orbit_configs[i]['color'], linewidth=1.5)
 
-plt.title(f'State {target_state} Distribution Convergence Comparison', fontsize=14)
+# 理想狀況下的誤差基準線（誤差為 0）
+plt.axhline(y=0, color='black', linestyle='--', alpha=0.6, label='Ideal Estimation (Zero Error)')
+
+plt.title(f'State {target_state} Estimation Absolute Error across Different Orbit Scales', fontsize=12)
 plt.xlabel('Time Slot (n)')
-plt.ylabel('Probability')
+plt.ylabel('Absolute Error |Observed - True|')
 plt.grid(True, alpha=0.3)
-plt.legend()
+plt.legend(loc='upper right', fontsize=10)
+plt.tight_layout()
 plt.show()
 
-# 假設 a: 成功次數, b: 碰撞率 (模擬結束後計算的平均值)
-#modes_list = ['MODE 1', 'MODE 2', 'MODE 3', 'MODE 4']
-#success_rates = [results[m]['SuccessRate'] for m in [1, 2, 3, 4]]
-modes_list = ['MODE 1', 'MODE 2', 'MODE 4']
-success_rates = [results[m]['SuccessRate'] for m in [1, 2, 4]]
+# 填入你的實測數據
+plr_real = results[0]["PLR"]
+plr_real2 = results[1]["PLR"]
+plr_ideal = results[2]["PLR"]
+#plr_ideal2 = results[3]["PLR"]
 
-fig, ax1 = plt.subplots(figsize=(10, 6))
+plr_values = [plr_real, plr_real2, plr_ideal] #, plr_ideal2]
 
-# 畫出成功率 (長條圖)
-ax1.bar(modes_list, success_rates, color='skyblue', alpha=0.7, label='SuccessRate')
-ax1.set_ylabel('Access Success Rate', color='blue', fontsize=12)
+plt.figure(figsize=(6, 5))
+bars = plt.bar(labels, plr_values, width=0.4)
 
-plt.title('Access Efficiency  Comparison', fontsize=14)
-ax1.legend(loc='upper left')
+# 在長條圖上方標註數值
+for bar in bars:
+    yval = bar.get_height()
+    plt.text(
+        bar.get_x() + bar.get_width() / 2,
+        yval + 0.01,
+        f"{yval:.4f}",
+        ha="center",
+        va="bottom",
+    )
+
+plt.ylabel("Packet Loss Rate (PLR)")
+plt.title("PLR Comparison: Real vs. Ideal Case")
+plt.ylim(0, max(plr_values) + 0.1)
+plt.grid(axis="y", linestyle="--", alpha=0.5)
+
+plt.tight_layout()
 plt.show()
 
-# --- 圖表 2：Reward (負載平衡度) 變化比較 ---
-plt.figure(figsize=(10, 6))
+print(f"--- Test Complete ---")
+print(f"Final PLR:")
+print(f"Real satellite scenario, Non-state dependent Backoff: {results[0]['PLR']:.4f}")
+print(f"Real satellite scenario: {results[1]['PLR']:.4f}")
+print(f"Ideal case: {results[2]['PLR']:.4f}")
+print(f"")
 
-# 標註：Reward 越高 (越接近 0) 代表負載越平均
-for m in modes:
-    # 假設 results[m]['rewards'] 存放了每個時隙計算出的 -variance
-    # 如果數據是 list，直接繪圖
-    plt.plot(range(len(results[m]['Reward'])), results[m]['Reward'], 
-             label=configs[m]['label'], color=configs[m]['color'], linewidth=1.2, alpha=0.8)
-
-plt.title('Reward Convergence (Negative Load Variance) - Comparison')
-plt.xlabel('Time Slot (n)')
-plt.ylabel('Reward (Higher is Better)')
-plt.grid(True, alpha=0.3)
-plt.legend()
-plt.show()
 '''
 import matplotlib.pyplot as plt
 import numpy as np
+import main
 
 # --- 模擬運行與數據收集 (僅針對 MODE 1) ---
-num = 10000
-m = 4 # 僅跑 MODE 1: RL + Backoff
+num = 200
+m = 1 # 僅跑 MODE 1: RL + Backoff
 results = {}
 
-# a: 最終負載, b: 成功率, c: N_tilde 歷史, d: Pi 歷史, e: 真實 Pi, f: reward 歷史
+# a: 最終負載, b: 成功率, c: N_tilde 歷史, d: Pi 歷史, e: 真實 Pi, f: reward 歷史 g: episode history (包含 plr, reward, throughput)
 # 建議將 RAO 週期從 640ms 調小 (例如 100ms) 以增加 Episode 內的採樣點
-a, b, c, d, e, f = main.main(0.01, 4, 20, num, m, 42)
+a, b, c, d, e, f, g = main.main(0.01, 2, 10, num, m, 42, 5)
 results[m] = {
     'N_tilde': c, 
     'Pi': d, 
     'Loads': a, 
     'SuccessRate': b, 
     'Reward': f, 
-    'TruePi': e
+    'TruePi': e,
+    'EpisodeHistory': g
 }
 
 # --- 圖表 1：人口估計收斂 (N_tilde) ---
@@ -296,3 +262,55 @@ plt.show()
 
 print(f"--- Test Complete ---")
 print(f"Final Success Rate: {results[m]['SuccessRate']:.4f}")
+
+epo_history = results[m]['EpisodeHistory']
+# 設定繪圖風格
+plt.style.use('seaborn-v0_8-muted')
+epochs = np.arange(1, len(epo_history["plr"]) + 1)
+
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+fig.suptitle(f"Training Performance Analysis (Total Epochs: {len(epochs)})", fontsize=16)
+
+# --- 圖一：Packet Loss Rate (PLR) 趨勢 ---
+axes[0].plot(epochs, epo_history["plr"], color='#3498db', alpha=0.4, label='Raw PLR')
+# 計算移動平均以觀察趨勢
+if len(epochs) >= 10:
+    ma_plr = np.convolve(epo_history["plr"], np.ones(10)/10, mode='valid')
+    axes[0].plot(epochs[9:], ma_plr, color='#2980b9', linewidth=2, label='Moving Avg (10)')
+
+# 如果有 MODE 4 的基準線數據，可以手動填入
+#mode4_benchmark = 0.245  # 範例數值
+#axes[0].axhline(y=mode4_benchmark, color='#e74c3c', linestyle='--', label='MODE 4 Baseline')
+
+axes[0].set_title("Packet Loss Rate")
+axes[0].set_xlabel("Epoch")
+axes[0].set_ylabel("PLR")
+axes[0].legend()
+axes[0].grid(True, linestyle=':', alpha=0.6)
+
+# --- 圖二：Reward (Negative Load Variance) 收斂 ---
+# Reward 反映了 RL 是否成功降低了衛星間的負載不均
+axes[1].plot(epochs, epo_history["reward"], color='#f39c12')
+axes[1].set_title("Learning Progress (Reward)")
+axes[1].set_xlabel("Epoch")
+axes[1].set_ylabel("Average Reward")
+axes[1].grid(True, linestyle=':', alpha=0.6)
+
+# --- 圖三：System Throughput 吞吐量 ---
+# 觀察在不同 UE 分佈下，總體吞吐量是否維持穩定
+axes[2].plot(epochs, epo_history["throughput"], color='#27ae60')
+axes[2].set_title("Total System Throughput")
+axes[2].set_xlabel("Epoch")
+axes[2].set_ylabel("Packets / Second")
+axes[2].grid(True, linestyle=':', alpha=0.6)
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.show()
+
+# 最後在終端機輸出最終效能總結
+final_10_plr = np.mean(epo_history["plr"][-10:])
+print(f"\n" + "="*30)
+print(f"Final Performance (Last 10 Epochs Avg):")
+print(f"- Final PLR: {final_10_plr:.4f}")
+print(f"- Throughput : {np.mean(epo_history['throughput'][-10:]):.2f} pkts/s")
+print(f"="*30)

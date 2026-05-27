@@ -1,6 +1,7 @@
 import main
 import numpy as np
 import matplotlib.pyplot as plt
+import h5py
 
 
 num_trials = 5  # 測試軌道面數量從 1 到 5
@@ -12,7 +13,7 @@ unique_sat_record = np.zeros(num_trials)
 for i in range(num_trials):
     # 執行 main 函數並獲取評估結果
     # 假設 main 會回傳 evaluate_visibility_heterogeneity 的結果 dictionary
-    result = main.main(0.01, i+1, 20, 10000, 0, 46) #目前都是抓仰角10度以上的衛星，納入i個軌道面
+    result = main.main(0.01, i+1, 20, 10000, 0, 46, 1) #目前都是抓仰角10度以上的衛星，納入i個軌道面
     
     jaccard_record[i] = result['avg_jaccard']
     cv_record[i] = result['cv_visibility']

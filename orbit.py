@@ -100,7 +100,9 @@ def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4)
 
     # 切片：只取前 Top N，並還原成原本的 (inc, raan) 格式以便下方代碼繼續使用
     unique_planes = [(x[0], x[1]) for x in plane_candidates[:top_n]]
-    
+    if top_n <= 0: 
+        print("Load all planes without filtering.")
+        unique_planes = [(x[0], x[1]) for x in plane_candidates]
     #print(f"[Step 3] Selected Top {len(unique_planes)} planes out of {len(plane_candidates)} candidates.")
     # --- [修改結束] ---
 

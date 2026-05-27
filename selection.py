@@ -66,7 +66,7 @@ class SatelliteSelectionAgent:
         
         return state
 
-    def select_action(self, state, epsilon, S_heuristic):
+    def select_action(self, state, epsilon, S_heuristic=None):
         """
         S_heuristic: 可選參數。如果傳入 MODE 4 的分數，RL 將在此基礎上進行微調
         """
@@ -134,3 +134,9 @@ class SatelliteSelectionAgent:
         self.steps_done += 1
         if self.steps_done % 100 == 0:
             self.target_net.load_state_dict(self.policy_net.state_dict())
+    def reset_history(self):
+        """在每個 Episode 開始前清空歷史緩存"""
+        self.load_history.clear()
+        self.ttg_history.clear()
+        self.current_S = np.ones(self.sat_num) # 重置分數為 1
+        self.steps_done = 0
