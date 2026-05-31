@@ -88,7 +88,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # --- 模擬運行與數據收集 ---
-num = 10000
+num = 20000
 parameter_set = [[3,3,0.01],[4,3,0.01],[6,19,0.01]]  #Mode,軌道面數量/可見衛星數量
 results = {}
 true_pi = None
@@ -200,13 +200,13 @@ import numpy as np
 import main
 
 # --- 模擬運行與數據收集 (僅針對 MODE 1) ---
-num = 200
-m = 1 # 僅跑 MODE 1: RL + Backoff
+num = 20000
+m = 2 # 僅跑 MODE 1: RL + Backoff
 results = {}
 
 # a: 最終負載, b: 成功率, c: N_tilde 歷史, d: Pi 歷史, e: 真實 Pi, f: reward 歷史 g: episode history (包含 plr, reward, throughput)
 # 建議將 RAO 週期從 640ms 調小 (例如 100ms) 以增加 Episode 內的採樣點
-a, b, c, d, e, f, g = main.main(0.01, 2, 10, num, m, 42, 5)
+a, b, c, d, e, f, g = main.main(0.01, 3, 10, num, m, 42, 5)
 results[m] = {
     'N_tilde': c, 
     'Pi': d, 
