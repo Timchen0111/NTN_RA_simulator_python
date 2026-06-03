@@ -31,8 +31,9 @@ class controller:
         for group in weights.keys():
             group_key = tuple(group)
             scores = self.S_by_group.get(group_key)
-            if scores is None or len(scores) != len(group_key):
-                scores = np.ones(len(group_key))
+            # 中文註解：每個 group 都保留自己專屬的全衛星分數向量；目前尚未實作分數學習，所以先全設為 1。
+            if scores is None or len(scores) != self.sat_num:
+                scores = np.ones(self.sat_num)
             current_scores[group_key] = scores
         self.S_by_group = current_scores
         # Changed: prepare group scores outside calculate_ps; keep existing scores and initialize only missing or mismatched groups.
@@ -208,6 +209,9 @@ class UE:
         self.active_prob = rho
         self.QoS_requirement = [0.2,0.2,0.2,0.2,0.2] #對應不同delay budget的QoS需求，總和為1
         self.visible_satellites = []
+        self.S = None
+        self.acb_selection_count = 0
+        self.acb_score_fallback_count = 0
         self.geo = wgs84.latlon(self.location[0], self.location[1])
     def acquire_visible_sat(self,sat_list,current_time_obj,mode,num):
         self.visible_satellites = []
@@ -219,10 +223,12 @@ class UE:
         else:
             index = 0
             for sat in sat_list:
-                _, angle, distance = channel_visibility(self.geo, sat.skyfield_sat, min_elevation=0, t=current_time_obj)
+                visible, angle, distance = channel_visibility(self.geo, sat.skyfield_sat, min_elevation=0, t=current_time_obj)
                 self.angle[index] = angle
                 self.distance[index] = distance
-                self.visible_satellites.append(sat)
+                # 中文註解：對齊 preselection，仰角小於等於 0 的衛星不放入 UE 本輪可選 active set。
+                if visible:
+                    self.visible_satellites.append(sat)
                 index += 1
             sorted_indices = np.argsort(self.angle)[::-1]
             # 提取前兩好衛星的實體 ID 或是物件指標
@@ -252,7 +258,20 @@ class UE:
         #取得系統資訊，包含backoff機率和衛星選擇資訊
         #print(f"UE {self.id}, group {self.group}")
         self.p_b = ctrl.p_b
-        self.S = ctrl.S#[self.group]
+        # 中文註解：啟用 group-wise 分數，UE 依照自己的 Top-2 group 接收專屬的全衛星分數向量。
+        if self.group is None:
+            # 中文註解：若 UE 尚未被分到 group，先保留 S=None，後續由 ACB_test 的最佳仰角 fallback 處理。
+            self.S = None
+            return
+        group_key = tuple(self.group)
+        if group_key not in ctrl.S_by_group:
+            # 中文註解：若該 group 沒有被系統安排分數，保留 S=None，後續由 ACB_test 的最佳仰角 fallback 處理。
+            self.S = None
+            return
+        group_scores = ctrl.S_by_group[group_key]
+        if len(group_scores) != ctrl.sat_num:
+            raise ValueError(f"UE {self.id} received score length {len(group_scores)}, expected {ctrl.sat_num}.")
+        self.S = group_scores
     def ACB_test(self):
         backoff = False
         target_sat = None
@@ -260,6 +279,13 @@ class UE:
         if r < self.p_b[self.budget-self.delay-1]: # Backoff
             backoff = True
         if not backoff and len(self.visible_satellites) > 0:
+            self.acb_selection_count += 1
+            if self.S is None:
+                # 中文註解：若 UE 沒有收到分數，例外改選目前可見集合中仰角最高的衛星，並記錄 fallback 次數。
+                self.acb_score_fallback_count += 1
+                target_sat = max(self.visible_satellites, key=lambda sat: self.angle[sat.id])
+                self.execute_RA(target_sat)
+                return
             # 取得目前可見衛星在全體衛星集合中的 ID 
             visible_ids = [sat.id for sat in self.visible_satellites] 
             # 提取對應的分數並計算機率 a_{i,k}
@@ -295,24 +321,33 @@ class UE:
 def calculate_ps(ctrl,n,group_weight_table, group_ps_table):
     weights = group_weight_table[n]
     ps_by_group = group_ps_table[n]
-    # Changed: calculate p_s from the current RAO's prepared group scores.
+    # 中文註解：依照公式 p_s = sum_g w_g sum_k a_{g,k} p_{s,k}^g 計算，p_{s,k}^g 由預計算表提供。
     p_s = 0.0
     for group, w_g in weights.items():
         group_key = tuple(group)
         ps_g = ps_by_group[group_key]   # shape: (K,)
-        # Top-2 group，例如 group = (k1, k2)
-        visible_ids = list(group_key)
+        if len(ps_g) != ctrl.sat_num:
+            raise ValueError(f"p_s vector length {len(ps_g)} does not match number of satellites {ctrl.sat_num} for group {group_key}")
         if group_key not in ctrl.S_by_group:
             raise KeyError(f"Missing score for group {group_key} at RAO {n}")
-        scores = ctrl.S_by_group[group_key]
-        if len(scores) != len(visible_ids):
-            raise ValueError(f"Score length {len(scores)} does not match group size {len(visible_ids)} for group {group_key}")
-        # Changed: calculate_ps only reads prepared scores; score initialization happens in the main flow.
-        exp_scores = np.exp(scores - np.max(scores))  # 避免 overflow
+
+        # 中文註解：每個 group 使用自己的全衛星分數向量，並由此計算該 group 專屬的 a_{g,k}。
+        scores = np.asarray(ctrl.S_by_group[group_key], dtype=float)
+        if len(scores) != ctrl.sat_num:
+            raise ValueError(f"Score length {len(scores)} does not match number of satellites {ctrl.sat_num} for group {group_key}")
+        # 中文註解：對齊 UE 行為，雖然每個 group 收到全 K 分數，但 softmax 只在可見衛星集合上正規化。
+        visible_mask = ps_g > 0
+        finite_mask = np.isfinite(scores) & visible_mask
+        if not np.any(visible_mask):
+            continue
+        if not np.any(finite_mask):
+            raise ValueError(f"All visible satellite scores are non-finite for group {group_key}, cannot calculate p_s.")
+        exp_scores = np.zeros_like(scores, dtype=float)
+        exp_scores[finite_mask] = np.exp(scores[finite_mask] - np.max(scores[finite_mask]))
         a_g = exp_scores / np.sum(exp_scores)
-        group_success = 0.0
-        for idx, k in enumerate(visible_ids):
-            group_success += a_g[idx] * ps_g[k]
+
+        # 中文註解：不可見衛星的 a_{g,k}=0；可見衛星依 group 專屬分數重新正規化後加總。
+        group_success = np.sum(a_g * ps_g)
         p_s += w_g * group_success
     return p_s
 
@@ -555,6 +590,9 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS):
             # 重置 Agent 的記憶與當前分數 [新增]
         ctrl.reset_agent()
         throughput_history = []
+        for ue in ue_list:
+            ue.acb_selection_count = 0
+            ue.acb_score_fallback_count = 0
         #start_dt = datetime(2026, 2, 12, 20, 42, 0, tzinfo=timezone.utc) #每個epoch重置時間，之後可能會改成從不同時間開始
         #重置衛星狀態
         for sat in active_sat_pool:
@@ -616,9 +654,11 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS):
             Lambda = ctrl.load_estimator(expected_tables) #每個RAO都呼叫一次load estimator，並且傳入預計算好的期望值表
             #先以p_s=1測試。
             ctrl.set_group_scores_for_rao(n)
-            # Changed: initialize/fill group scores in the main flow before calculate_ps reads them.
-            ctrl.backoff_control(total_load=sum(Lambda), rho=(RHO * 1000 / trao), p_d = ue_list[0].QoS_requirement, p_s = calculate_ps(ctrl,n,group_weight_table, group_ps_table), K=ctrl.sat_num, Z=sat_list[0].Z,MODE=MODE,n=n)
+            # 中文註解：先用預計算表格與目前衛星選擇分數算出預估 p_s，後面會和本輪實際觀察值比較。
+            p_s = calculate_ps(ctrl,n,group_weight_table, group_ps_table)
+            print(f"Precomputed p_s for RAO {n}: {p_s:.4f}")
             ctrl.satellite_selection(Lambda=Lambda,MODE=MODE, n=n, target_location=geo, t=current_t, epoch=epoch)
+            ctrl.backoff_control(total_load=sum(Lambda), rho=(RHO * 1000 / trao), p_d = ue_list[0].QoS_requirement, p_s=p_s, K=ctrl.sat_num, Z=sat_list[0].Z,MODE=MODE,n=n)
             current_n_hat = ctrl.N_estimate
             n_history.append(current_n_hat)
             
@@ -629,11 +669,27 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS):
                 if ue.active: #只對active的UE計算ACB和決定順序
                     ue.acquire_SIB(ctrl)
 
+            # 中文註解：記錄本輪 UE 執行 RA 前的通道成功/失敗累積值，用來計算本輪真實 p_s。
+            channel_success_before = sum(ue.transmission_success for ue in ue_list)
+            channel_fail_before = sum(ue.transmission_fail for ue in ue_list)
+
             # UE-side processing
             for ue in ue_list:
                 # 如果通過 ACB，會呼叫 sat.receive_preamble()
                 if ue.active: 
                     ue.ACB_test()
+
+            # 中文註解：真實 p_s 定義為本輪實際嘗試 RA 的 UE 中，通道判定成功的比例；若本輪無嘗試則不計算。
+            channel_success_after = sum(ue.transmission_success for ue in ue_list)
+            channel_fail_after = sum(ue.transmission_fail for ue in ue_list)
+            slot_channel_success = channel_success_after - channel_success_before
+            slot_channel_fail = channel_fail_after - channel_fail_before
+            slot_channel_attempts = slot_channel_success + slot_channel_fail
+            if slot_channel_attempts > 0:
+                real_p_s = slot_channel_success / slot_channel_attempts
+                print(f"RAO {n}: Real p_s={real_p_s:.4f}, Precomputed p_s={p_s:.4f}, Diff={real_p_s - p_s:+.4f}")
+            else:
+                print(f"RAO {n}: Real p_s=N/A (no RA attempts), Precomputed p_s={p_s:.4f}")
 
             # [新增] 進度條與監控資訊 (每 50 slots 印一次)
             if n % 50 == 0:
@@ -662,6 +718,9 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS):
         total_success_packets = sum(throughput_history)
         total_lost_packets = sum(ue.loss for ue in ue_list)
         channel_failure_rates = sum(ue.transmission_fail for ue in ue_list) / (sum(ue.transmission_success for ue in ue_list) + sum(ue.transmission_fail for ue in ue_list))
+        score_fallback_count = sum(ue.acb_score_fallback_count for ue in ue_list)
+        acb_selection_count = sum(ue.acb_selection_count for ue in ue_list)
+        score_fallback_rate = score_fallback_count / acb_selection_count if acb_selection_count > 0 else 0.0
         avg_throughput = total_success_packets / (RAO_COUNTS * trao / 1000)  # packets per second
         plr = 1 - total_success_packets/(total_success_packets+total_lost_packets)
         print(f"----------Episode {epoch+1} Complete.----------")
@@ -670,6 +729,7 @@ def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS):
         print(f"Average Throughput (packets/second): {avg_throughput:.2f}")
         print(f"Packet Loss Rate: {plr:.4f}")
         print(f"Channel Failure Rate: {channel_failure_rates:.4f}")
+        print(f"ACB Score Fallback Frequency: {score_fallback_count}/{acb_selection_count} ({score_fallback_rate:.4f})")
 
         each_epo_plr.append(plr)
         each_epo_thr.append(avg_throughput)

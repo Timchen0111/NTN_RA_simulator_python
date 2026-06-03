@@ -200,7 +200,7 @@ import numpy as np
 import main
 
 # --- 模擬運行與數據收集 (僅針對 MODE 1) ---
-num = 20000
+num = 10000
 m = 2 # 僅跑 MODE 1: RL + Backoff
 results = {}
 

@@ -43,7 +43,7 @@ def backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z, MODE, Lambda):
         env = SatelliteEnv(N_tilde, rho)
         def objective(p_b_vec):
             p_c, _, _ = env.solve_p_c(p_b_vec, D, p_d, p_s, K, Z)
-            return get_loss(p_b_vec, p_c, p_d, D)
+            return get_loss(p_b_vec, p_c, p_s, p_d, D)
 
         res = minimize(objective, last_p_b, method='L-BFGS-B', 
                     bounds=[(0, 1)] * D, tol=1e-6)
@@ -58,11 +58,11 @@ def backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z, MODE, Lambda):
         p_c, _, opt_pi = env.solve_p_c(backoff, D, p_d, p_s, K, Z)
         return backoff, opt_pi
 
-def get_loss(p_b, p_c, p_d_arr, D):
+def get_loss(p_b, p_c, p_s, p_d_arr, D):
     L = 0.0
     for i in range(1, D + 1):
         prod = 1.0
         for j in range(1, i + 1):
-            prod *= (1 - (1 - p_b[j-1]) * (1 - p_c))
+            prod *= (1 - (1 - p_b[j-1]) * p_s * (1 - p_c))
         L += p_d_arr[i-1] * prod
     return L

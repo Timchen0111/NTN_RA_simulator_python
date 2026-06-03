@@ -183,7 +183,7 @@ def main(NUM_SAT):
         real_sats=real_sats,
         geo=geo,
         start_dt=start_dt,
-        seconds=10,
+        seconds=200,
         min_elevation=10
     )
 
@@ -198,7 +198,7 @@ def main(NUM_SAT):
     compute_group_ps_table(
         real_sats=real_sats,
         start_dt=start_dt,
-        seconds=10,
+        seconds=200,
         trao_ms=100,
         sample_locations=sample_locations,
         filename="group_ps_table.npz"
