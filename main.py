@@ -305,22 +305,25 @@ def calculate_ps(ctrl,n,group_weight_table, group_ps_table):
     return p_s
 
 def channel_calculator(elevation_angle, distance_km):
+    if elevation_angle <= 0:
+        return False
+
     LOS_PROB = {
-        "elevation_deg": [10, 20, 30, 40, 50, 60, 70, 80, 90],
-        "prob": [0.782, 0.869, 0.919, 0.929, 0.935, 0.940, 0.949, 0.952, 0.998],
+        "elevation_deg": [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+        "prob": [0.0, 0.782, 0.869, 0.919, 0.929, 0.935, 0.940, 0.949, 0.952, 0.998],
         #"elevation_deg": np.array([10, 20, 30, 40, 50, 60, 70, 80, 90]),
         #"prob": np.array([0.246, 0.386, 0.493, 0.613, 0.726, 0.805, 0.919, 0.968, 0.992]),
     }
     CHANNEL_PARAMETER = {
-        "elevation_deg": [10, 20, 30, 40, 50, 60, 70, 80, 90],
-        "los_sigma_sf_db":  [1.79, 1.14, 1.14, 0.92, 1.42, 1.56, 0.85, 0.72, 0.72],
-        "nlos_sigma_sf_db": [8.93, 9.08, 8.78, 10.25, 10.56, 10.74, 10.17, 11.52, 11.52],
-        "nlos_cl_db":       [19.52, 18.17, 18.42, 18.28, 18.63, 17.68, 16.50, 16.30, 16.30]
+        "elevation_deg": [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+        "los_sigma_sf_db":  [1.79, 1.79, 1.14, 1.14, 0.92, 1.42, 1.56, 0.85, 0.72, 0.72],
+        "nlos_sigma_sf_db": [8.93, 8.93, 9.08, 8.78, 10.25, 10.56, 10.74, 10.17, 11.52, 11.52],
+        "nlos_cl_db":       [20.87, 19.52, 18.17, 18.42, 18.28, 18.63, 17.68, 16.50, 16.30, 16.30]
         #"los_sigma_sf_db":  np.array([4, 4, 4, 4, 4, 4, 4, 4, 4]),
         #"nlos_sigma_sf_db": np.array([6, 6, 6, 6, 6, 6, 6, 6, 6]),
         #"nlos_cl_db":            np.array([34.3, 30.9, 29.0, 27.7, 26.8, 26.2, 25.8, 25.5, 25.5]),
     }
-    elevation_angle = np.clip(elevation_angle, 10, 90)
+    elevation_angle = np.clip(elevation_angle, 0, 90)
 
     p_los = np.interp(
         elevation_angle,

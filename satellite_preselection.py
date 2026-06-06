@@ -119,11 +119,7 @@ def compute_group_ps_table(
                 dist_km = distance.km
                 angles[k] = angle
                 distances[k] = dist_km
-                if angle > 0:
-                    # 單一點不用大量 MC，直接取一次 channel trial
-                    ps_vector[k] = 1.0 if channel_calculator(angle, dist_km) else 0.0
-                else:
-                    ps_vector[k] = 0.0
+                ps_vector[k] = 1.0 if channel_calculator(angle, dist_km) else 0.0
             top2 = np.argsort(angles)[::-1][:2]
             group = (int(top2[0]), int(top2[1]))
             if group not in group_count:
