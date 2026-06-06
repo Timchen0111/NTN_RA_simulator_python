@@ -193,7 +193,7 @@ print(f"Real satellite scenario, Non-state dependent Backoff: {results[0]['PLR']
 print(f"Real satellite scenario: {results[1]['PLR']:.4f}")
 print(f"Ideal case: {results[2]['PLR']:.4f}")
 print(f"")
-
+'''
 '''
 import matplotlib.pyplot as plt
 import numpy as np
@@ -201,12 +201,12 @@ import main
 
 # --- 模擬運行與數據收集 (僅針對 MODE 1) ---
 num = 10000
-m = 2 # 僅跑 MODE 1: RL + Backoff
+m = 1
 results = {}
 
 # a: 最終負載, b: 成功率, c: N_tilde 歷史, d: Pi 歷史, e: 真實 Pi, f: reward 歷史 g: episode history (包含 plr, reward, throughput)
-# 建議將 RAO 週期從 640ms 調小 (例如 100ms) 以增加 Episode 內的採樣點
-a, b, c, d, e, f, g = main.main(0.01, 3, 10, num, m, 42, 5)
+#def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=1000)
+a, b, c, d, e, f, g = main.main(0.01, 30, num, m, 42, 1,0.01)
 results[m] = {
     'N_tilde': c, 
     'Pi': d, 
@@ -261,7 +261,7 @@ plt.legend()
 plt.show()
 
 print(f"--- Test Complete ---")
-print(f"Final Success Rate: {results[m]['SuccessRate']:.4f}")
+print(f"Packet Loss Rate: {results[m]['SuccessRate']:.4f}")
 
 epo_history = results[m]['EpisodeHistory']
 # 設定繪圖風格
@@ -314,3 +314,75 @@ print(f"Final Performance (Last 10 Epochs Avg):")
 print(f"- Final PLR: {final_10_plr:.4f}")
 print(f"- Throughput : {np.mean(epo_history['throughput'][-10:]):.2f} pkts/s")
 print(f"="*30)
+
+'''
+# --- Epsilon sweep for convex group satellite selection ---
+import matplotlib.pyplot as plt
+import numpy as np
+import main as simulator_main
+
+EPSILON_VALUES = [0.0, 1e-4, 1e-3, 1e-2, 1e-1]
+EPSILON_RHO = 0.005
+EPSILON_SECONDS = 30
+EPSILON_NUM_UE = 10000
+EPSILON_MODE = 1
+EPSILON_SEED = 42
+EPSILON_EPOCHS = 1
+
+epsilon_results = []
+
+for eps in EPSILON_VALUES:
+    print(f"\nRunning epsilon sweep: epsilon={eps}")
+    avg_throughput, plr, n_history, actual_pi, observe_pi, reward_history, epo_history = simulator_main.main(
+        EPSILON_RHO,
+        EPSILON_SECONDS,
+        EPSILON_NUM_UE,
+        EPSILON_MODE,
+        EPSILON_SEED,
+        EPSILON_EPOCHS,
+        IMBALANCE_EPSILON=eps,
+    )
+    epsilon_results.append({
+        "epsilon": eps,
+        "plr": plr,
+        "throughput": avg_throughput,
+        "reward": np.mean(reward_history) if len(reward_history) > 0 else np.nan,
+    })
+
+epsilon_labels = [str(item["epsilon"]) for item in epsilon_results]
+epsilon_plr = [item["plr"] for item in epsilon_results]
+epsilon_throughput = [item["throughput"] for item in epsilon_results]
+epsilon_reward = [item["reward"] for item in epsilon_results]
+
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+fig.suptitle("Convex Selection Epsilon Sweep", fontsize=16)
+
+axes[0].plot(epsilon_labels, epsilon_plr, marker="o", color="#3498db")
+axes[0].set_title("Packet Loss Rate")
+axes[0].set_xlabel("Imbalance epsilon")
+axes[0].set_ylabel("PLR")
+axes[0].grid(True, linestyle=":", alpha=0.6)
+
+axes[1].plot(epsilon_labels, epsilon_throughput, marker="o", color="#27ae60")
+axes[1].set_title("Average Throughput")
+axes[1].set_xlabel("Imbalance epsilon")
+axes[1].set_ylabel("Packets / Second")
+axes[1].grid(True, linestyle=":", alpha=0.6)
+
+axes[2].plot(epsilon_labels, epsilon_reward, marker="o", color="#f39c12")
+axes[2].set_title("Average Reward")
+axes[2].set_xlabel("Imbalance epsilon")
+axes[2].set_ylabel("Reward")
+axes[2].grid(True, linestyle=":", alpha=0.6)
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.show()
+
+print("\n--- Epsilon Sweep Complete ---")
+for item in epsilon_results:
+    print(
+        f"epsilon={item['epsilon']}: "
+        f"PLR={item['plr']:.4f}, "
+        f"throughput={item['throughput']:.2f}, "
+        f"reward={item['reward']:.4f}"
+    )
