@@ -194,7 +194,7 @@ print(f"Real satellite scenario: {results[1]['PLR']:.4f}")
 print(f"Ideal case: {results[2]['PLR']:.4f}")
 print(f"")
 '''
-'''
+
 import matplotlib.pyplot as plt
 import numpy as np
 import main
@@ -206,7 +206,7 @@ results = {}
 
 # a: 最終負載, b: 成功率, c: N_tilde 歷史, d: Pi 歷史, e: 真實 Pi, f: reward 歷史 g: episode history (包含 plr, reward, throughput)
 #def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=1000)
-a, b, c, d, e, f, g = main.main(0.01, 30, num, m, 42, 1,0.01)
+a, b, c, d, e, f, g = main.main(0.01, 10, num, m, 42, 1,0.01)
 results[m] = {
     'N_tilde': c, 
     'Pi': d, 
@@ -386,3 +386,4 @@ for item in epsilon_results:
         f"throughput={item['throughput']:.2f}, "
         f"reward={item['reward']:.4f}"
     )
+'''

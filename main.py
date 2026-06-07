@@ -305,22 +305,32 @@ def calculate_ps(ctrl,n,group_weight_table, group_ps_table):
     return p_s
 
 def channel_calculator(elevation_angle, distance_km):
+    if elevation_angle <= 0:
+        return False
+
     LOS_PROB = {
-        "elevation_deg": [10, 20, 30, 40, 50, 60, 70, 80, 90],
-        "prob": [0.782, 0.869, 0.919, 0.929, 0.935, 0.940, 0.949, 0.952, 0.998],
+        # 新增 0 度 anchor，讓 0~10 度的 LOS 機率做線性插值；
+        # 舊版會把 0~10 度全部 clip 成 10 度，會高估低仰角鏈路。
+        "elevation_deg": [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+        "prob": [0.0, 0.782, 0.869, 0.919, 0.929, 0.935, 0.940, 0.949, 0.952, 0.998],
         #"elevation_deg": np.array([10, 20, 30, 40, 50, 60, 70, 80, 90]),
         #"prob": np.array([0.246, 0.386, 0.493, 0.613, 0.726, 0.805, 0.919, 0.968, 0.992]),
     }
     CHANNEL_PARAMETER = {
-        "elevation_deg": [10, 20, 30, 40, 50, 60, 70, 80, 90],
-        "los_sigma_sf_db":  [1.79, 1.14, 1.14, 0.92, 1.42, 1.56, 0.85, 0.72, 0.72],
-        "nlos_sigma_sf_db": [8.93, 9.08, 8.78, 10.25, 10.56, 10.74, 10.17, 11.52, 11.52],
-        "nlos_cl_db":       [19.52, 18.17, 18.42, 18.28, 18.63, 17.68, 16.50, 16.30, 16.30]
+        # 0~10 度同樣保留一個 0 度 anchor，供 np.interp 線性插值。
+        # sigma 是量測/模型 fitting 的標準差，低仰角不一定單調，因此 0 度先沿用 10 度值。
+        # CL 則有較明顯低仰角惡化趨勢，因此用 10/20 度趨勢外插得到 0 度值 20.87 dB。
+        "elevation_deg": [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+        "los_sigma_sf_db":  [1.79, 1.79, 1.14, 1.14, 0.92, 1.42, 1.56, 0.85, 0.72, 0.72],
+        "nlos_sigma_sf_db": [8.93, 8.93, 9.08, 8.78, 10.25, 10.56, 10.74, 10.17, 11.52, 11.52],
+        "nlos_cl_db":       [20.87, 19.52, 18.17, 18.42, 18.28, 18.63, 17.68, 16.50, 16.30, 16.30]
         #"los_sigma_sf_db":  np.array([4, 4, 4, 4, 4, 4, 4, 4, 4]),
         #"nlos_sigma_sf_db": np.array([6, 6, 6, 6, 6, 6, 6, 6, 6]),
         #"nlos_cl_db":            np.array([34.3, 30.9, 29.0, 27.7, 26.8, 26.2, 25.8, 25.5, 25.5]),
     }
-    elevation_angle = np.clip(elevation_angle, 10, 90)
+    # 只限制插值表的有效範圍；0 度以下已經在前面 return False。
+    # 因此 0<angle<10 時會由 np.interp 在 0 與 10 度 anchor 之間線性插值。
+    elevation_angle = np.clip(elevation_angle, 0, 90)
 
     p_los = np.interp(
         elevation_angle,
