@@ -200,7 +200,7 @@ import numpy as np
 import main
 
 # --- 模擬運行與數據收集 (僅針對 MODE 1) ---
-num = 10000
+num = 100
 m = 1
 results = {}
 
