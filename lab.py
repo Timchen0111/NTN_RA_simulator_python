@@ -200,13 +200,13 @@ import numpy as np
 import main
 
 # --- 模擬運行與數據收集 (僅針對 MODE 1) ---
-num = 100
+num = 10000
 m = 1
 results = {}
 
 # a: 最終負載, b: 成功率, c: N_tilde 歷史, d: Pi 歷史, e: 真實 Pi, f: reward 歷史 g: episode history (包含 plr, reward, throughput)
 #def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=1000)
-a, b, c, d, e, f, g = main.main(0.01, 10, num, m, 42, 1,0.01)
+a, b, c, d, e, f, g = main.main(0.01, 5, num, m, 42, 1,0.01)
 results[m] = {
     'N_tilde': c, 
     'Pi': d, 

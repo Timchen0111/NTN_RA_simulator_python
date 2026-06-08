@@ -564,7 +564,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01):
             current_dt = start_dt + timedelta(milliseconds=current_ms)
             current_t = ts.from_datetime(current_dt)
             # --- 衛星移動與可見衛星列表更新 ---
-            if n % 5 == 0 or n == 1: #每5個RAO更新一次可見衛星列表，因為衛星移動不會太快
+            if True: #每5個RAO更新一次可見衛星列表，因為衛星移動不會太快
                 visible_count = 0
                 #sat_visibility_counts = np.zeros(len(active_sat_pool))
                 if epoch == 0:
