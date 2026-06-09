@@ -1,5 +1,6 @@
 import numpy as np
 from skyfield.api import load, wgs84
+from skyfield.framelib import itrs  # 此次 2026/6/9 凌晨 visibility 加速修改：批次版仰角計算需要衛星的 ITRS/ECEF 座標。
 import orbit
 from datetime import datetime, timezone, timedelta  # 必須有 timedelta
 import Load_estimator, backoff_control, N_estimate, selection
@@ -170,6 +171,21 @@ class UE:
         self.acb_selection_count = 0
         self.acb_policy_fallback_count = 0
         self.geo = wgs84.latlon(self.location[0], self.location[1])
+        # 此次 2026/6/9 凌晨 visibility 加速修改：UE 位置固定，先保存 ECEF 與 ENU 單位向量，避免每個 RAO 重複建立地面座標。
+        self.lat_rad = np.deg2rad(self.location[0])
+        self.lon_rad = np.deg2rad(self.location[1])
+        self.ecef_km = self.geo.itrs_xyz.km
+        self.enu_east = np.array([-np.sin(self.lon_rad), np.cos(self.lon_rad), 0.0])
+        self.enu_north = np.array([
+            -np.sin(self.lat_rad) * np.cos(self.lon_rad),
+            -np.sin(self.lat_rad) * np.sin(self.lon_rad),
+            np.cos(self.lat_rad),
+        ])
+        self.enu_up = np.array([
+            np.cos(self.lat_rad) * np.cos(self.lon_rad),
+            np.cos(self.lat_rad) * np.sin(self.lon_rad),
+            np.sin(self.lat_rad),
+        ])
     def acquire_visible_sat(self,sat_list,current_time_obj,mode,num):
         self.visible_satellites = []
         self.all_satellites = list(sat_list)
@@ -381,6 +397,78 @@ def channel_visibility(UE_location, satellite, min_elevation,t):
     alt, az, distance = topocentric.altaz()
     return alt.degrees > min_elevation, alt.degrees, distance.km
 
+def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_elevation=0, chunk_size=5000):
+    # 此次 2026/6/9 凌晨 visibility 加速修改：每個 RAO 仍完整更新 visibility，但改成批次 ECEF/ENU 投影，避免 UE*衛星 次 Skyfield altaz 呼叫。
+    sat_count = len(sat_list)
+    if sat_count == 0:
+        for ue in ue_list:
+            ue.visible_satellites = []
+            ue.all_satellites = []
+            ue.angle = np.zeros(0)
+            ue.distance = np.zeros(0)
+            ue.group = None
+        return 0
+
+    sat_snapshot = list(sat_list)
+    if mode == 6 or mode == 7:
+        # 此次 2026/6/9 凌晨 visibility 加速修改：保留 ideal mode 的原始語意，所有 UE 都視為可見全部衛星。
+        for ue in ue_list:
+            ue.visible_satellites = list(sat_snapshot)
+            ue.all_satellites = list(sat_snapshot)
+            ue.angle = np.zeros(sat_count)
+            ue.distance = np.zeros(sat_count)
+            ue.group = None
+        return len(ue_list) * sat_count
+
+    for sat in sat_snapshot:
+        if sat.id < 0 or sat.id >= sat_count:
+            raise ValueError(
+                f"Satellite id {sat.id} is outside angle/distance array length {sat_count}."
+            )
+
+    # 此次 2026/6/9 凌晨 visibility 加速修改：衛星位置只和當前 RAO 時間有關，每顆衛星在本 RAO 只轉一次 ITRS/ECEF。
+    sat_ecef_km = np.stack(
+        [sat.skyfield_sat.at(current_time_obj).frame_xyz(itrs).km for sat in sat_snapshot],
+        axis=0,
+    )
+
+    visible_count = 0
+    for start in range(0, len(ue_list), chunk_size):
+        # 此次 2026/6/9 凌晨 visibility 加速修改：分批處理 UE，維持矩陣化速度，同時避免大量 UE 時一次配置過大的 delta 矩陣。
+        chunk = ue_list[start:start + chunk_size]
+        ue_ecef_km = np.vstack([ue.ecef_km for ue in chunk])
+        east_vectors = np.vstack([ue.enu_east for ue in chunk])
+        north_vectors = np.vstack([ue.enu_north for ue in chunk])
+        up_vectors = np.vstack([ue.enu_up for ue in chunk])
+
+        delta = sat_ecef_km[None, :, :] - ue_ecef_km[:, None, :]
+        up_component = np.einsum("nkd,nd->nk", delta, up_vectors)
+        east_component = np.einsum("nkd,nd->nk", delta, east_vectors)
+        north_component = np.einsum("nkd,nd->nk", delta, north_vectors)
+        horizontal_distance = np.hypot(east_component, north_component)
+        elevation_deg = np.degrees(np.arctan2(up_component, horizontal_distance))
+        distance_km = np.linalg.norm(delta, axis=2)
+        visible_mask = elevation_deg > min_elevation
+        sorted_indices = np.argsort(elevation_deg, axis=1)[:, ::-1]
+
+        for local_idx, ue in enumerate(chunk):
+            # 此次 2026/6/9 凌晨 visibility 加速修改：回填既有 UE 欄位，讓後續 ACB/RA 邏輯沿用原本資料介面。
+            ue.all_satellites = list(sat_snapshot)
+            ue.angle = elevation_deg[local_idx].copy()
+            ue.distance = distance_km[local_idx].copy()
+            visible_indices = np.flatnonzero(visible_mask[local_idx])
+            ue.visible_satellites = [sat_snapshot[i] for i in visible_indices]
+            visible_count += len(visible_indices)
+            if sat_count >= 2:
+                ue.group = (
+                    sat_snapshot[sorted_indices[local_idx, 0]].id,
+                    sat_snapshot[sorted_indices[local_idx, 1]].id,
+                )
+            else:
+                ue.group = None
+
+    return visible_count
+
 def evaluate_visibility_heterogeneity(ue_list, num_samples=100):
     """
     評估 UE 可見衛星集合的異質性
@@ -568,10 +656,10 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01):
                 visible_count = 0
                 #sat_visibility_counts = np.zeros(len(active_sat_pool))
                 if epoch == 0:
+                    # 此次 2026/6/9 凌晨 visibility 加速修改：以批次 ECEF/ENU 計算取代逐 UE、逐衛星的 Skyfield altaz 熱點。
+                    visible_count = update_visibility_batch(ue_list, active_sat_pool, current_t, MODE)
                     record_dict = {}
                     for ue in ue_list:
-                        ue.acquire_visible_sat(active_sat_pool, current_t,MODE,ctrl.sat_num)
-                        visible_count += len(ue.visible_satellites)
                         #for sat in ue.visible_satellites:
                             #sat_visibility_counts[sat.id] += 1
                         record_dict[ue.id] = ue.visible_satellites

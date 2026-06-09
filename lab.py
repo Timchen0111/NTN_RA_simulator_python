@@ -206,7 +206,7 @@ results = {}
 
 # a: 最終負載, b: 成功率, c: N_tilde 歷史, d: Pi 歷史, e: 真實 Pi, f: reward 歷史 g: episode history (包含 plr, reward, throughput)
 #def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=1000)
-a, b, c, d, e, f, g = main.main(0.01, 5, num, m, 42, 1,0.01)
+a, b, c, d, e, f, g = main.main(0.005, 50, num, m, 42, 1,0.01)
 results[m] = {
     'N_tilde': c, 
     'Pi': d, 
@@ -263,57 +263,7 @@ plt.show()
 print(f"--- Test Complete ---")
 print(f"Packet Loss Rate: {results[m]['SuccessRate']:.4f}")
 
-epo_history = results[m]['EpisodeHistory']
-# 設定繪圖風格
-plt.style.use('seaborn-v0_8-muted')
-epochs = np.arange(1, len(epo_history["plr"]) + 1)
 
-fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-fig.suptitle(f"Training Performance Analysis (Total Epochs: {len(epochs)})", fontsize=16)
-
-# --- 圖一：Packet Loss Rate (PLR) 趨勢 ---
-axes[0].plot(epochs, epo_history["plr"], color='#3498db', alpha=0.4, label='Raw PLR')
-# 計算移動平均以觀察趨勢
-if len(epochs) >= 10:
-    ma_plr = np.convolve(epo_history["plr"], np.ones(10)/10, mode='valid')
-    axes[0].plot(epochs[9:], ma_plr, color='#2980b9', linewidth=2, label='Moving Avg (10)')
-
-# 如果有 MODE 4 的基準線數據，可以手動填入
-#mode4_benchmark = 0.245  # 範例數值
-#axes[0].axhline(y=mode4_benchmark, color='#e74c3c', linestyle='--', label='MODE 4 Baseline')
-
-axes[0].set_title("Packet Loss Rate")
-axes[0].set_xlabel("Epoch")
-axes[0].set_ylabel("PLR")
-axes[0].legend()
-axes[0].grid(True, linestyle=':', alpha=0.6)
-
-# --- 圖二：Reward (Negative Load Variance) 收斂 ---
-# Reward 反映了 RL 是否成功降低了衛星間的負載不均
-axes[1].plot(epochs, epo_history["reward"], color='#f39c12')
-axes[1].set_title("Learning Progress (Reward)")
-axes[1].set_xlabel("Epoch")
-axes[1].set_ylabel("Average Reward")
-axes[1].grid(True, linestyle=':', alpha=0.6)
-
-# --- 圖三：System Throughput 吞吐量 ---
-# 觀察在不同 UE 分佈下，總體吞吐量是否維持穩定
-axes[2].plot(epochs, epo_history["throughput"], color='#27ae60')
-axes[2].set_title("Total System Throughput")
-axes[2].set_xlabel("Epoch")
-axes[2].set_ylabel("Packets / Second")
-axes[2].grid(True, linestyle=':', alpha=0.6)
-
-plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-plt.show()
-
-# 最後在終端機輸出最終效能總結
-final_10_plr = np.mean(epo_history["plr"][-10:])
-print(f"\n" + "="*30)
-print(f"Final Performance (Last 10 Epochs Avg):")
-print(f"- Final PLR: {final_10_plr:.4f}")
-print(f"- Throughput : {np.mean(epo_history['throughput'][-10:]):.2f} pkts/s")
-print(f"="*30)
 
 '''
 # --- Epsilon sweep for convex group satellite selection ---
