@@ -3,48 +3,48 @@ import Load_estimator as l
 import old as main
 import matplotlib.pyplot as plt
 '''
-# 1. 設定實驗參數
+# 1. 閮剖?撖阡??
 rho = [0.2,0.4,0.6] 
 SEEDS = [13] 
 MODES = [1, 2] 
 
-# 儲存最終結果的字典
-# 結構為 {mode: [(avg_tp, avg_sr), ...]}
+# ?脣??蝯???摮
+# 蝯???{mode: [(avg_tp, avg_sr), ...]}
 final_results = {mode: [] for mode in MODES}
 
 for count in rho:
-    # 儲存當前 UE 數量下，各個 Mode 的加總數據
+    # ?脣??嗅? UE ?賊?銝???Mode ??蝮賣??
     mode_sums = {mode: [0.0, 0.0] for mode in MODES} # [tp_sum, sr_sum]
     
     for s in SEEDS:
         print(f"Running simulations for UE count: {count} with seed: {s}...")
         
         for mode in MODES:
-            # 每次執行前重置種子，確保相同 UE 分佈與流量
+            # 瘥活?瑁???蝵桃車摮?蝣箔??詨? UE ??????
             np.random.seed(s)
             
-            # 呼叫 main 並取得回傳值 (throughput, success_rate)
+            # ?澆 main 銝血?敺??喳?(throughput, success_rate)
             tp, sr = main.main(count, 1, 100, mode, s)
             
             mode_sums[mode][0] += tp
             mode_sums[mode][1] += sr
             
-    # 計算平均值並存入最終結果
+    # 閮?撟喳??潔蒂摮?蝯???
     num_seeds = len(SEEDS)
     for mode in MODES:
         avg_tp = mode_sums[mode][0] / num_seeds
         avg_sr = mode_sums[mode][1] / num_seeds
         final_results[mode].append((avg_tp, avg_sr))
 
-# 2. 準備繪圖數據
+# 2. 皞?蝜芸??豢?
 labels = {1: 'with BACKOFF', 2: 'no BACKOFF'}
 colors = {1: 'purple', 2: 'blue'}
 markers = {1: 'o', 2: 's'}
 
-# 3. 設定畫布
+# 3. 閮剖??怠?
 plt.figure(figsize=(14, 6))
 
-# --- 左圖：Average Throughput 比較 ---
+# --- 撌血?嚗verage Throughput 瘥? ---
 plt.subplot(1, 2, 1)
 for mode in MODES:
     y_tp = [r[0] for r in final_results[mode]]
@@ -56,7 +56,7 @@ plt.ylabel('Average Throughput (packets/second)')
 plt.grid(True, linestyle='--', alpha=0.5)
 plt.legend()
 
-# --- 右圖：Success Rate 比較 ---
+# --- ?喳?嚗uccess Rate 瘥? ---
 plt.subplot(1, 2, 2)
 for mode in MODES:
     y_sr = [r[1] for r in final_results[mode]]
@@ -68,13 +68,13 @@ plt.ylabel('Success Rate')
 plt.grid(True, linestyle='--', alpha=0.5)
 plt.legend()
 
-# 4. 顯示結果
+# 4. 憿舐內蝯?
 plt.tight_layout()
 plt.show()
 '''
 
 '''
-MODE說明
+MODE隤芣?
 MODE1: RL + backoff (Proposed scheme)
 MODE2: backoff only (With same satellite selection score)
 MODE3: Baseline: No Satellite Selection, Non-state dependent backoff
@@ -87,37 +87,37 @@ MODE7: Non-state dependent backoff + IDEAL SCENARIO, same visibility for all UEs
 import matplotlib.pyplot as plt
 import numpy as np
 
-# --- 模擬運行與數據收集 ---
+# --- 璅⊥??????---
 num = 20000
-parameter_set = [[3,3,0.01],[4,3,0.01],[6,19,0.01]]  #Mode,軌道面數量/可見衛星數量
+parameter_set = [[3,3,0.01],[4,3,0.01],[6,19,0.01]]  #Mode,頠??Ｘ???航?銵??賊?
 results = {}
 true_pi = None
 
 for i in range(len(parameter_set)):
-    # 執行 main.main 並取得回傳值 
-    # 注意：這裡的引數必須與你的 main 函式定義嚴格對齊
-    # 傳入目前的軌道面數量 i，固定模式 m (建議先固定為舊版或特定模式進行變因隔離)
+    # ?瑁? main.main 銝血?敺??喳?
+    # 瘜冽?嚗ㄐ???詨???雿? main ?賢?摰儔?湔撠?
+    # ?喳?桀?????賊? i嚗摰芋撘?m (撱箄降?摰???摰芋撘脰?霈??)
     a, b, c, d, e, f, g = main.main(parameter_set[i][2], parameter_set[i][1],30, num, parameter_set[i][0], 42, 50)
     results[i] = {
         'N_tilde': c, 
         'Pi': d, 
         'Loads': a, 
         'PLR': b, 
-        'True_Pi': e,  # 將每一組實驗各自的 True Pi 存下來，因為衛星數變了，理論 True Pi 也會變
+        'True_Pi': e,  # 撠?銝蝯祕撽??芰? True Pi 摮?靘??銵??貉?鈭??? True Pi 銋?霈?
         'Reward': f
     }
 
-# 為不同的軌道面數量動態產生顏色對比 (使用 colormap 讓圖表更專業)
+# ?箔???頠??Ｘ??????脣?瘥?(雿輻 colormap 霈?銵冽撠平)
 colors = plt.cm.viridis(np.linspace(0, 0.8, len(parameter_set)))
 orbit_configs = {i: {'color': colors[idx]} for idx, i in enumerate(range(len(parameter_set)))}
 
 
-# --- 圖表 1：不同軌道面數量下的人口估計收斂比較 (N_tilde) ---
+# --- ?” 1嚗?????賊?銝?鈭箏隡啗??嗆?瘥? (N_tilde) ---
 plt.figure(figsize=(10, 6))
-# 真實的總用戶數依然是固定的基準線
+# ?祕?蜇?冽?訾??嗆?箏??皞?
 plt.axhline(y=num, color='black', linestyle='--', label=f'True N ({num})', alpha=0.6)
 
-# 將集合 {} 改為列表 []，確保索引 i 能正確對應
+# 撠???{} ?寧?” []嚗Ⅱ靽揣撘?i ?賣迤蝣箏???
 #labels = ['Real Satellite Scenario, rho = 0.01', 'Real Satellite Scenario, rho = 0.005', 'Ideal Case: Uniform Visibility, rho = 0.01', 'Ideal Case: Uniform Visibility, rho = 0.005']
 labels = ['Non-state dependent Backoff (Real Satellite)', 'Real Satellite Scenario', 'Ideal Case: Uniform Visibility']
 for i in range(len(parameter_set)):
@@ -131,22 +131,22 @@ plt.tight_layout()
 plt.show()
 
 
-# --- 圖表 2：不同軌道面數量下的 Pi 估計絕對誤差比較 (以 State 0 為例) ---
+# --- ?” 2嚗?????賊?銝? Pi 隡啗?蝯?隤文榆瘥? (隞?State 0 ?箔?) ---
 plt.figure(figsize=(10, 6))
-target_state = 0  # 觀察 State 0 (Idle)
+target_state = 0  # 閫撖?State 0 (Idle)
 
 for i in range(len(parameter_set)):
-    data_matrix = np.array(results[i]['Pi'])         # 模擬中估計的 Observed Pi 歷史紀錄
-    current_true_pi = results[i]['True_Pi']          # 該配置下的系統真實 True Pi 固定值
+    data_matrix = np.array(results[i]['Pi'])         # 璅⊥銝凋摯閮? Observed Pi 甇瑕蝝??
+    current_true_pi = results[i]['True_Pi']          # 閰脤?蝵桐??頂蝯梁?撖?True Pi ?箏???
     
-    # 計算每個 Time Slot 的絕對誤差：|Observed_Pi - True_Pi|
+    # 閮?瘥?Time Slot ??撠炊撌殷?|Observed_Pi - True_Pi|
     estimation_error = np.abs(data_matrix[:, target_state] - current_true_pi[target_state])
     
-    # 修正重點：改用列表，並移除重複的 color 與 linewidth 參數
+    # 靽格迤??嚗?典?銵剁?銝衣宏?日?銴? color ??linewidth ?
     plt.plot(range(len(estimation_error)), estimation_error, 
              label=labels[i], color=orbit_configs[i]['color'], linewidth=1.5)
 
-# 理想狀況下的誤差基準線（誤差為 0）
+# ??瘜??炊撌桀皞?嚗炊撌桃 0嚗?
 plt.axhline(y=0, color='black', linestyle='--', alpha=0.6, label='Ideal Estimation (Zero Error)')
 
 plt.title(f'State {target_state} Estimation Absolute Error across Different Orbit Scales', fontsize=12)
@@ -157,7 +157,7 @@ plt.legend(loc='upper right', fontsize=10)
 plt.tight_layout()
 plt.show()
 
-# 填入你的實測數據
+# 憛怠雿?撖行葫?豢?
 plr_real = results[0]["PLR"]
 plr_real2 = results[1]["PLR"]
 plr_ideal = results[2]["PLR"]
@@ -168,7 +168,7 @@ plr_values = [plr_real, plr_real2, plr_ideal] #, plr_ideal2]
 plt.figure(figsize=(6, 5))
 bars = plt.bar(labels, plr_values, width=0.4)
 
-# 在長條圖上方標註數值
+# ?券璇?銝璅酉?詨?
 for bar in bars:
     yval = bar.get_height()
     plt.text(
@@ -199,14 +199,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import main
 
-# --- 模擬運行與數據收集 (僅針對 MODE 1) ---
+
 num = 10000
 m = 1
+USE_REAL_PS = True
 results = {}
 
-# a: 最終負載, b: 成功率, c: N_tilde 歷史, d: Pi 歷史, e: 真實 Pi, f: reward 歷史 g: episode history (包含 plr, reward, throughput)
 #def main(RHO, NUM_SAT, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=1000)
-a, b, c, d, e, f, g = main.main(0.005, 50, num, m, 42, 1,0.01)
+a, b, c, d, e, f, g = main.main(0.02, 50, num, m, 42, 1, 0.001, USE_REAL_PS=USE_REAL_PS)
 results[m] = {
     'N_tilde': c, 
     'Pi': d, 
@@ -217,7 +217,7 @@ results[m] = {
     'EpisodeHistory': g
 }
 
-# --- 圖表 1：人口估計收斂 (N_tilde) ---
+
 plt.figure(figsize=(10, 6))
 plt.axhline(y=num, color='black', linestyle='--', label=f'True N ({num})', alpha=0.6)
 plt.plot(range(len(results[m]['N_tilde'])), results[m]['N_tilde'], 
@@ -230,12 +230,12 @@ plt.grid(True, alpha=0.3)
 plt.legend()
 plt.show()
 
-# --- 圖表 2：Reward 變化圖 (觀察收斂與 Visibility 失效) ---
+
 plt.figure(figsize=(10, 6))
 plt.plot(range(len(results[m]['Reward'])), results[m]['Reward'], 
          label='Reward (Negative Variance)', color='blue', linewidth=1.2)
 
-# 標註：若 Reward 突然跳回 0，通常代表衛星已飛離範圍 (Lambda 歸零)
+
 plt.title('Reward Variation over Time Slots')
 plt.xlabel('Time Slot (n)')
 plt.ylabel('Reward (-Var)')
@@ -243,22 +243,49 @@ plt.grid(True, alpha=0.3)
 plt.legend()
 plt.show()
 
-# --- 圖表 3：狀態分佈收斂 (以 State 0 為例) ---
-plt.figure(figsize=(10, 6))
-target_state = 0
-true_pi_val = results[m]['TruePi'][target_state]
-plt.axhline(y=true_pi_val, color='black', linestyle='--', label=f'True Pi_{target_state}', alpha=0.6)
+# --- Plot 3: state distribution comparison ---
+# --- Plot 3: state distribution over time for all pi_n states ---
+pi_history = np.asarray(results[m]['Pi'], dtype=float)
+estimated_active_pi = np.asarray(results[m]['TruePi'], dtype=float)
+estimated_pi = np.concatenate(([max(0.0, 1.0 - np.sum(estimated_active_pi))], estimated_active_pi))
 
-data_matrix = np.array(results[m]['Pi'])
-plt.plot(range(len(data_matrix)), data_matrix[:, target_state], 
-         label=f'Observed Pi_{target_state}', color='blue', linewidth=1.5)
+if pi_history.size > 0:
+    if pi_history.ndim == 1:
+        pi_history = pi_history.reshape(1, -1)
 
-plt.title(f'State {target_state} Distribution Convergence')
-plt.xlabel('Time Slot (n)')
-plt.ylabel('Probability')
-plt.grid(True, alpha=0.3)
-plt.legend()
-plt.show()
+    record_interval = 10
+    time_slots = np.arange(pi_history.shape[0]) * record_interval
+    state_count = pi_history.shape[1]
+
+    plt.figure(figsize=(10, 6))
+    for state_idx in range(state_count):
+        state_label = 'Idle' if state_idx == 0 else f'State {state_idx}'
+        line = plt.plot(
+            time_slots,
+            pi_history[:, state_idx],
+            label=state_label,
+            linewidth=1.5,
+        )[0]
+
+        if state_idx < estimated_pi.size:
+            plt.axhline(
+                y=estimated_pi[state_idx],
+                color=line.get_color(),
+                linestyle='--',
+                linewidth=1.0,
+                alpha=0.65,
+                label=f'Estimated {state_label}',
+            )
+
+    plt.title(r'Convergence of State Distributions ($\pi_n$)')
+    plt.xlabel('Time Slot (n)')
+    plt.ylabel('Probability')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+else:
+    print("No pi history was recorded; skip state distribution plot.")
 
 print(f"--- Test Complete ---")
 print(f"Packet Loss Rate: {results[m]['SuccessRate']:.4f}")

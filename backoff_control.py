@@ -32,7 +32,7 @@ class SatelliteEnv:
         for _ in range(50):
             C = self.compute_C(p_b, p_c, D, p_s)
             pi = self.compute_pi(C, D, p_d)
-            Lambda = self.n_tilde * np.sum(pi * (1 - p_b))
+            Lambda = self.n_tilde * np.sum(pi * (1 - p_b)) * p_s
             new_p_c = 1 - np.exp(-Lambda / (K * Z))
             if abs(new_p_c - p_c) < 1e-7: break
             p_c = new_p_c
