@@ -18,7 +18,7 @@ class controller:
         self.A_by_group = {}
         self.N_estimate = 0
         self.rls = N_estimate.RLSEstimator(initial_N=self.N_estimate)
-        self.actualPi = np.zeros(self.Dmax) #用來記錄每個pi的真實值，供測試參考
+        self.actualPi = np.zeros(self.Dmax + 1) #用來記錄每個pi的真實值，供測試參考，包含 idle state
         self.actual = []
         self.history_reward = []
         self.ue_list = []
@@ -75,14 +75,14 @@ class controller:
         return Lambda
     def backoff_control(self, total_load, rho, p_d, p_s, K, Z, MODE,n):
         #實作backoff control
-        denominator = np.sum(self.observe_pi * (1 - self.p_b))
+        denominator = np.sum(self.observe_pi * (1 - self.p_b)) * p_s
         N_tilde = self.N_estimation(Lambda=total_load, denominator=denominator)
         self.N_estimate = N_tilde
         #N_tilde = 10000 #丟真值測試用
         self.p_b, self.observe_pi = backoff_control.backoff_control(N_tilde, self.p_b, rho, self.Dmax, p_d, p_s, K, Z, MODE, total_load)
         if n % 10 == 0:
             #print(f"Actual Pi: {self.actualPi}, Observed Pi: {self.observe_pi}")
-            self.actual.append(list(self.actualPi[:5]))
+            self.actual.append(list(self.actualPi))
         #print(f"Backoff control updated: p_b={self.p_b}, pi={self.observe_pi}")
         return
     def satellite_selection(self, Lambda,MODE,n,target_location,t,epoch):
@@ -551,12 +551,13 @@ def load_ps_tables(filename="group_ps_table.npz"):
     print(f"Group ps table shape: {group_ps_table.shape}")
     return group_weight_table, group_ps_table
 
-def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01):
+def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
     print(f"--- Simulation Start ---")
     print(f"Mode: {MODE}, Active rate: {RHO},  Time Slots: {SECONDS}")
     print(f"Satellite selection imbalance epsilon: {IMBALANCE_EPSILON}")
+    print(f"Use lagged real p_s: {USE_REAL_PS}")
     
     # 設定觀察點 (台北)
     geo = wgs84.latlon(25.03, 121.56)
@@ -632,6 +633,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01):
             # 重置 controller 的暫存狀態
         ctrl.reset_agent()
         throughput_history = []
+        last_real_p_s = None
         for ue in ue_list:
             ue.acb_selection_count = 0
             ue.acb_policy_fallback_count = 0
@@ -691,7 +693,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01):
                 else:
                     idle_ue_count += 1
             
-            ctrl.actualPi = real_counts / NUM_UE #更新真實pi供測試參考
+            ctrl.actualPi = np.concatenate(([idle_ue_count / NUM_UE], real_counts / NUM_UE)) #更新真實pi供測試參考
             #Controller-side processing
             ctrl.set_group_probabilities_for_rao(
                 n,
@@ -699,7 +701,8 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01):
                 imbalance_epsilon=IMBALANCE_EPSILON,
             )
             # 中文註解：先用預計算表格與目前 group selection policy 算出預估 p_s，後面會和本輪實際觀察值比較。
-            p_s = calculate_ps(ctrl,n,group_weight_table, group_ps_table)
+            precomputed_p_s = calculate_ps(ctrl,n,group_weight_table, group_ps_table)
+            p_s = last_real_p_s if (USE_REAL_PS and last_real_p_s is not None) else precomputed_p_s
             #print(f"Precomputed p_s for RAO {n}: {p_s:.4f}")
             if n == 0:
                 Lambda = np.zeros(ctrl.sat_num)
@@ -734,9 +737,16 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01):
             slot_channel_success = channel_success_after - channel_success_before
             slot_channel_fail = channel_fail_after - channel_fail_before
             slot_channel_attempts = slot_channel_success + slot_channel_fail
-            if slot_channel_attempts > 0 and n % 50 == 0:
+            if slot_channel_attempts > 0:
                 real_p_s = slot_channel_success / slot_channel_attempts
-                print(f"RAO {n}: Real p_s={real_p_s:.4f}, Precomputed p_s={p_s:.4f}, Diff={real_p_s - p_s:+.4f}")
+                last_real_p_s = real_p_s
+                if n % 50 == 0:
+                    print(
+                        f"RAO {n}: Real p_s={real_p_s:.4f}, "
+                        f"Precomputed p_s={precomputed_p_s:.4f}, "
+                        f"Control p_s={p_s:.4f}, "
+                        f"Diff={real_p_s - precomputed_p_s:+.4f}"
+                    )
             #else:
                 #print(f"RAO {n}: Real p_s=N/A (no RA attempts), Precomputed p_s={p_s:.4f}")
                 

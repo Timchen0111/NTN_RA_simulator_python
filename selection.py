@@ -160,7 +160,7 @@ def solve_group_selection_policy(
 
     Constraints:
         sum_k a_g,k = 1, a_g,k >= 0
-        sum_k (sum_g w_g a_g,k - 1/K)^2 <= imbalance_epsilon
+        sum_k (sum_g w_g a_g,k p_s^g,k - p_bar/K)^2 <= imbalance_epsilon
 
     Returns:
         dict[group] -> K-dimensional probability vector A_g.
@@ -213,20 +213,21 @@ def solve_group_selection_policy(
         initial_matrix = x0_matrix / row_sums
 
     a_var = cp.Variable((group_count, sat_num), nonneg=True)
-    aggregate_selection = w @ a_var
+    effective_load = cp.sum(cp.multiply(w[:, None] * ps_matrix, a_var), axis=0)
+    p_bar = cp.sum(effective_load)
 
     constraints = [
         cp.sum(a_var, axis=1) == 1.0,
     ]
     if imbalance_epsilon <= 0:
-        constraints.append(aggregate_selection == (np.ones(sat_num) / sat_num))
+        constraints.append(effective_load == (p_bar / sat_num))
     else:
         constraints.append(
-            cp.sum_squares(aggregate_selection - (np.ones(sat_num) / sat_num))
+            cp.sum_squares(effective_load - (p_bar / sat_num))
             <= float(imbalance_epsilon)
         )
 
-    objective = cp.Maximize(cp.sum(cp.multiply(w[:, None] * ps_matrix, a_var)))
+    objective = cp.Maximize(p_bar)
     problem = cp.Problem(objective, constraints)
     if initial_matrix is not None:
         a_var.value = initial_matrix
@@ -271,13 +272,14 @@ def solve_group_selection_policy(
     if np.any(row_sums <= 0):
         raise RuntimeError("Group selection optimization returned an invalid policy.")
     a = a / row_sums
-    aggregate = np.sum(w[:, None] * a, axis=0)
-    imbalance = float(np.sum((aggregate - (1.0 / sat_num)) ** 2))
+    effective = np.sum(w[:, None] * a * ps_matrix, axis=0)
+    p_bar_value = float(np.sum(effective))
+    imbalance = float(np.sum((effective - (p_bar_value / sat_num)) ** 2))
     if imbalance_epsilon <= 0:
-        if not np.allclose(aggregate, np.ones(sat_num) / sat_num, atol=1e-5):
+        if not np.allclose(effective, np.ones(sat_num) * (p_bar_value / sat_num), atol=1e-5):
             raise RuntimeError(
-                f"Group selection optimization violated uniform aggregate constraint: "
-                f"max error={np.max(np.abs(aggregate - (1.0 / sat_num)))}"
+                f"Group selection optimization violated effective-load balance constraint: "
+                f"max error={np.max(np.abs(effective - (p_bar_value / sat_num)))}"
             )
     elif imbalance > float(imbalance_epsilon) + 1e-5:
         raise RuntimeError(
