@@ -1,9 +1,10 @@
 import json
+import math
 import numpy as np
 from datetime import datetime, timezone, timedelta
 from skyfield.api import load, wgs84
 import orbit
-from main import channel_calculator, channel_visibility
+from main import channel_visibility
 
 
 def save_satellite_pool(real_sats, filename="fixed_satellite_pool.json"):
@@ -22,12 +23,45 @@ def save_satellite_pool(real_sats, filename="fixed_satellite_pool.json"):
     print(f"Saved {len(records)} satellites to {filename}")
 
 
-def estimate_channel_success_probability(elevation_angle, distance_km, mc_trials=200):
-    success = 0
-    for _ in range(mc_trials):
-        if channel_calculator(elevation_angle, distance_km):
-            success += 1
-    return success / mc_trials
+def _normal_cdf(x):
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+def estimate_channel_success_probability(elevation_angle, distance_km):
+    if elevation_angle <= 0:
+        return 0.0
+
+    LOS_PROB = {
+        "elevation_deg": [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+        "prob": [0.0, 0.782, 0.869, 0.919, 0.929, 0.935, 0.940, 0.949, 0.952, 0.998],
+    }
+    CHANNEL_PARAMETER = {
+        "elevation_deg": [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+        "los_sigma_sf_db":  [1.79, 1.79, 1.14, 1.14, 0.92, 1.42, 1.56, 0.85, 0.72, 0.72],
+        "nlos_sigma_sf_db": [8.93, 8.93, 9.08, 8.78, 10.25, 10.56, 10.74, 10.17, 11.52, 11.52],
+        "nlos_cl_db":       [20.87, 19.52, 18.17, 18.42, 18.28, 18.63, 17.68, 16.50, 16.30, 16.30],
+    }
+
+    elevation_angle = np.clip(elevation_angle, 0, 90)
+    p_los = np.interp(elevation_angle, LOS_PROB["elevation_deg"], LOS_PROB["prob"])
+    los_sigma = np.interp(elevation_angle, CHANNEL_PARAMETER["elevation_deg"], CHANNEL_PARAMETER["los_sigma_sf_db"])
+    nlos_sigma = np.interp(elevation_angle, CHANNEL_PARAMETER["elevation_deg"], CHANNEL_PARAMETER["nlos_sigma_sf_db"])
+    nlos_clutter_loss = np.interp(elevation_angle, CHANNEL_PARAMETER["elevation_deg"], CHANNEL_PARAMETER["nlos_cl_db"])
+
+    UE_TX_EIRP_DBM = 23.01
+    SAT_RX_GAIN_DBI = 24.0
+    FC_GHZ = 2.0
+    BANDWIDTH_HZ = 0.4e6
+    NOISE_FIGURE_DB = 5.0
+    SNR_THRESHOLD_DB = 0.0
+
+    fspl_db = 92.45 + 20 * np.log10(FC_GHZ) + 20 * np.log10(distance_km)
+    noise_dbm = -174 + 10 * np.log10(BANDWIDTH_HZ) + NOISE_FIGURE_DB
+    base_margin_db = UE_TX_EIRP_DBM + SAT_RX_GAIN_DBI - fspl_db - noise_dbm - SNR_THRESHOLD_DB
+
+    # Success happens when shadow fading is lower than the remaining SNR margin.
+    p_success_los = _normal_cdf(base_margin_db / los_sigma)
+    p_success_nlos = _normal_cdf((base_margin_db - nlos_clutter_loss) / nlos_sigma)
+    return float(p_los * p_success_los + (1.0 - p_los) * p_success_nlos)
 
 def select_active_satellite_pool(
     real_sats,
@@ -119,7 +153,7 @@ def compute_group_ps_table(
                 dist_km = distance.km
                 angles[k] = angle
                 distances[k] = dist_km
-                ps_vector[k] = 1.0 if channel_calculator(angle, dist_km) else 0.0
+                ps_vector[k] = estimate_channel_success_probability(angle, dist_km)
             top2 = np.argsort(angles)[::-1][:2]
             group = (int(top2[0]), int(top2[1]))
             if group not in group_count:

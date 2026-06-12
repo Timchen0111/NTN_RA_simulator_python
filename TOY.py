@@ -8,7 +8,7 @@ import main
 
 
 def summarize_group_tables(
-    filename="group_ps_table_remote.npz",
+    filename="group_ps_table.npz",
     preview_count=10,
     segment_size=100,
     segment_top_k=5,

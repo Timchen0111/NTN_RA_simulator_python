@@ -75,7 +75,8 @@ class controller:
         return Lambda
     def backoff_control(self, total_load, rho, p_d, p_s, K, Z, MODE,n):
         #實作backoff control
-        denominator = np.sum(self.observe_pi * (1 - self.p_b)) *p_s
+        #denominator = np.sum(self.observe_pi * (1 - self.p_b)) *p_s
+        denominator = np.sum(self.actualPi[1:] * (1 - self.p_b)) *p_s
         N_tilde = self.N_estimation(Lambda=total_load, denominator=denominator)
         self.N_estimate = N_tilde
         #N_tilde = 10000 #丟真值測試用
@@ -523,7 +524,7 @@ def evaluate_visibility_heterogeneity(ue_list, num_samples=100):
         "total_unique_sats": unique_sats # 系統當前總共利用了幾顆衛星
     }
 
-def load_fixed_satellites(filename="fixed_satellite_pool.json"):
+def load_fixed_satellites(filename="fixed_satellite_pool_r.json"):
     with open(filename, "r", encoding="utf-8") as f:
         records = json.load(f)
     # 重新載入與 generate_satellite_pool.py 相同的 TLE
@@ -546,7 +547,7 @@ def load_fixed_satellites(filename="fixed_satellite_pool.json"):
         real_sats.append(sat_dict[norad_id])
     return real_sats
 
-def load_ps_tables(filename="group_ps_table.npz"):
+def load_ps_tables(filename="group_ps_table_r.npz"):
     data = np.load(
         filename,
         allow_pickle=True
@@ -571,9 +572,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01, US
     ts = load.timescale()
     start_dt = datetime(2026, 2, 12, 20, 42, 0, tzinfo=timezone.utc)
     #t_start = ts.from_datetime(start_dt)
-    real_sats = load_fixed_satellites(
-        "fixed_satellite_pool.json"
-    )
+    real_sats = load_fixed_satellites()
     #設定controller
     #載入其他預運算資料
     group_weight_table, group_ps_table = load_ps_tables()
@@ -641,6 +640,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01, US
         ctrl.reset_agent()
         throughput_history = []
         last_real_p_s = None
+        ps_history = []
         for ue in ue_list:
             ue.acb_selection_count = 0
             ue.acb_policy_fallback_count = 0
@@ -747,6 +747,13 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01, US
             if slot_channel_attempts > 0:
                 real_p_s = slot_channel_success / slot_channel_attempts
                 last_real_p_s = real_p_s
+                ps_history.append({
+                    "time_slot": n,
+                    "real": real_p_s,
+                    "precomputed": precomputed_p_s,
+                    "control": p_s,
+                    "error": real_p_s - precomputed_p_s,
+                })
                 if n % 50 == 0:
                     print(
                         f"RAO {n}: Real p_s={real_p_s:.4f}, "
@@ -803,7 +810,8 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01, US
     epo_history = {
         "throughput": each_epo_thr,
         "plr": each_epo_plr,
-        "reward": each_epo_reward
+        "reward": each_epo_reward,
+        "ps_history": ps_history,
     }
     return avg_throughput, plr, n_history, ctrl.actual, ctrl.observe_pi, ctrl.history_reward, epo_history #印出最後一個epoch的效能
 
