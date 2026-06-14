@@ -24,7 +24,10 @@ class SatelliteEnv:
             val = sum(p_d[k-1] * C[k, n] for k in range(n, D + 1))
             numerator[n-1] = self.rho * val
             inner_sum += val
-        return numerator / (1 + self.rho * inner_sum)
+        # pi is observed after packet arrivals and before the ACB decision.
+        # Therefore, an idle UE stays idle in this RAO only with probability
+        # (1 - rho); arrivals immediately enter an active delay-budget state.
+        return numerator / ((1 - self.rho) + self.rho * inner_sum)
         
 
     def solve_p_c(self, p_b, D, p_d, p_s, K, Z):

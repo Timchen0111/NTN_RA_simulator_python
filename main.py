@@ -75,8 +75,8 @@ class controller:
         return Lambda
     def backoff_control(self, total_load, rho, p_d, p_s, K, Z, MODE,n):
         #實作backoff control
-        #denominator = np.sum(self.observe_pi * (1 - self.p_b)) *p_s
-        denominator = np.sum(self.actualPi[1:] * (1 - self.p_b)) *p_s
+        denominator = np.sum(self.observe_pi * (1 - self.p_b)) *p_s
+        #denominator = np.sum(self.actualPi[1:] * (1 - self.p_b)) *p_s
         N_tilde = self.N_estimation(Lambda=total_load, denominator=denominator)
         self.N_estimate = N_tilde
         #N_tilde = 10000 #丟真值測試用
@@ -114,9 +114,14 @@ class satellite:
         self.actual_lambda = 0 # 真實附載 (UE數量)，供測試參考
     def assign_id(self, new_id):
         self.id = new_id
-    def receive_preamble(self,ue_id,angle, distance):
+    def receive_preamble(self,ue_id,angle, distance, fixed_channel_success_prob=None):
         # 模擬 UE隨機選取一個 Preamble (0 到 Z-1)
-        if channel_calculator(angle, distance):
+        if fixed_channel_success_prob is None:
+            channel_success = channel_calculator(angle, distance)
+        else:
+            channel_success = np.random.rand() < fixed_channel_success_prob
+
+        if channel_success:
             chosen_preamble = np.random.randint(0, self.Z)
             self.ue_pre[ue_id] = chosen_preamble
             return True
@@ -169,6 +174,7 @@ class UE:
         self.visible_satellites = []
         self.all_satellites = []
         self.A_g = None
+        self.fixed_channel_success_prob = None
         self.acb_selection_count = 0
         self.acb_policy_fallback_count = 0
         self.geo = wgs84.latlon(self.location[0], self.location[1])
@@ -193,9 +199,11 @@ class UE:
         self.angle = np.zeros(len(sat_list))        
         self.distance = np.zeros(len(sat_list))
         if mode == 6 or mode == 7:
+            self.fixed_channel_success_prob = 1.0
             for sat in sat_list:
                 self.visible_satellites.append(sat) #全部都看的到
         else:
+            self.fixed_channel_success_prob = None
             index = 0
             for sat in sat_list:
                 visible, angle, distance = channel_visibility(self.geo, sat.skyfield_sat, min_elevation=0, t=current_time_obj)
@@ -260,6 +268,10 @@ class UE:
         candidate_satellites = self.all_satellites if len(self.all_satellites) > 0 else self.visible_satellites
         if not backoff and len(candidate_satellites) > 0:
             self.acb_selection_count += 1
+            if self.fixed_channel_success_prob is not None:
+                target_sat = np.random.choice(candidate_satellites)
+                self.execute_RA(target_sat)
+                return
             if self.A_g is None:
                 self.acb_policy_fallback_count += 1
                 fallback_satellites = self.visible_satellites if len(self.visible_satellites) > 0 else candidate_satellites
@@ -286,7 +298,12 @@ class UE:
 
     def execute_RA(self,target_sat):
         #實際傳輸 Preamble
-        r = target_sat.receive_preamble(self.id, self.angle[target_sat.id], self.distance[target_sat.id])    
+        r = target_sat.receive_preamble(
+            self.id,
+            self.angle[target_sat.id],
+            self.distance[target_sat.id],
+            fixed_channel_success_prob=self.fixed_channel_success_prob,
+        )
         if r:
             self.transmission_success += 1
         else:
@@ -415,6 +432,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.angle = np.zeros(0)
             ue.distance = np.zeros(0)
             ue.group = None
+            ue.fixed_channel_success_prob = None
         return 0
 
     sat_snapshot = list(sat_list)
@@ -426,6 +444,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.angle = np.zeros(sat_count)
             ue.distance = np.zeros(sat_count)
             ue.group = None
+            ue.fixed_channel_success_prob = 1.0
         return len(ue_list) * sat_count
 
     for sat in sat_snapshot:
@@ -464,6 +483,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.all_satellites = list(sat_snapshot)
             ue.angle = elevation_deg[local_idx].copy()
             ue.distance = distance_km[local_idx].copy()
+            ue.fixed_channel_success_prob = None
             visible_indices = np.flatnonzero(visible_mask[local_idx])
             ue.visible_satellites = [sat_snapshot[i] for i in visible_indices]
             visible_count += len(visible_indices)
@@ -524,7 +544,7 @@ def evaluate_visibility_heterogeneity(ue_list, num_samples=100):
         "total_unique_sats": unique_sats # 系統當前總共利用了幾顆衛星
     }
 
-def load_fixed_satellites(filename="fixed_satellite_pool_r.json"):
+def load_fixed_satellites(filename="fixed_satellite_pool.json"):
     with open(filename, "r", encoding="utf-8") as f:
         records = json.load(f)
     # 重新載入與 generate_satellite_pool.py 相同的 TLE
@@ -547,7 +567,7 @@ def load_fixed_satellites(filename="fixed_satellite_pool_r.json"):
         real_sats.append(sat_dict[norad_id])
     return real_sats
 
-def load_ps_tables(filename="group_ps_table_r.npz"):
+def load_ps_tables(filename="group_ps_table.npz"):
     data = np.load(
         filename,
         allow_pickle=True
@@ -708,7 +728,10 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01, US
                 imbalance_epsilon=IMBALANCE_EPSILON,
             )
             # Compute the precomputed p_s from the group selection policy; optionally replace it with lagged real p_s for control.
-            precomputed_p_s = calculate_ps(ctrl,n,group_weight_table, group_ps_table)
+            if MODE == 6 or MODE == 7:
+                precomputed_p_s = 1.0
+            else:
+                precomputed_p_s = calculate_ps(ctrl,n,group_weight_table, group_ps_table)
             p_s = last_real_p_s if (USE_REAL_PS and last_real_p_s is not None) else precomputed_p_s
             #print(f"Precomputed p_s for RAO {n}: {p_s:.4f}")
             if n == 0:

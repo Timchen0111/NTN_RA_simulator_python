@@ -5,7 +5,7 @@ import main
 
 
 # Current single-run experiment.
-num = 10000
+num = 20000
 m = 1
 USE_REAL_PS = False
 results = {}

@@ -1,5 +1,5 @@
 class RLSEstimator:
-    def __init__(self, initial_N=0, P=50000, lam=0.995):
+    def __init__(self, initial_N=0, P=10000, lam=0.999):
         """
         RLS 估測器初始化
         :param initial_N: N 的初始猜測值
