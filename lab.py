@@ -4,12 +4,76 @@ import numpy as np
 import main
 
 
+RUN_RHO_SWEEP = True
+
+if RUN_RHO_SWEEP:
+    NUM_UE = 10000
+    SECONDS = 50
+    SEED = 42
+    NUM_EPOCHS = 1
+    IMBALANCE_EPSILON = 0.01
+    USE_REAL_PS = False
+    RHO_VALUES = np.array([0.005, 0.01, 0.015, 0.02, 0.025, 0.03])
+    MODES = {
+        1: "MODE1 Proposed",
+        3: "MODE3 Dynamic ACB",
+    }
+
+    # MODE3 is the Dynamic ACB baseline; all other experiment parameters are
+    # kept identical to MODE1 so the PLR curves isolate the backoff controller.
+    rho_results = {mode: [] for mode in MODES}
+    for mode in MODES:
+        for rho in RHO_VALUES:
+            print(f"\nRunning PLR rho sweep: mode={mode}, rho={rho}")
+            avg_throughput, plr, n_history, actual_pi, observe_pi, reward_history, epo_history = main.main(
+                rho,
+                SECONDS,
+                NUM_UE,
+                mode,
+                SEED,
+                NUM_EPOCHS,
+                IMBALANCE_EPSILON,
+                USE_REAL_PS=USE_REAL_PS,
+            )
+            final_n_estimate = n_history[-1] if len(n_history) > 0 else np.nan
+            rho_results[mode].append({
+                "rho": rho,
+                "plr": plr,
+                "throughput": avg_throughput,
+                "final_n_estimate": final_n_estimate,
+            })
+
+    plt.figure(figsize=(10, 6))
+    for mode, label in MODES.items():
+        rho_axis = np.array([item["rho"] for item in rho_results[mode]])
+        plr_values = np.array([item["plr"] for item in rho_results[mode]])
+        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=label)
+    plt.title(r"PLR Comparison under Different $\rho$")
+    plt.xlabel(r"Arrival probability $\rho$")
+    plt.ylabel("Packet Loss Rate")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- MODE1 vs MODE3 PLR Rho Sweep Complete ---")
+    for mode, label in MODES.items():
+        for item in rho_results[mode]:
+            print(
+                f"{label}, rho={item['rho']:.4f}: "
+                f"PLR={item['plr']:.4f}, "
+                f"throughput={item['throughput']:.2f}, "
+                f"final_N={item['final_n_estimate']:.2f}"
+            )
+    raise SystemExit
+
+
 # Current single-run experiment.
-num = 20000
+num = 10000
 m = 1
 USE_REAL_PS = False
 results = {}
-
+# MODE3: DACB baseline, proposed satellite selection
 a, b, c, d, e, f, g = main.main(0.01, 100, num, m, 42, 1, 0.01, USE_REAL_PS=USE_REAL_PS)
 
 results[m] = {
@@ -62,6 +126,7 @@ plt.show()
 pi_history = np.asarray(results[m]["Pi"], dtype=float)
 estimated_active_pi = np.asarray(results[m]["TruePi"], dtype=float)
 estimated_pi = np.concatenate(([max(0.0, 1.0 - np.sum(estimated_active_pi))], estimated_active_pi))
+
 
 if pi_history.size > 0:
     if pi_history.ndim == 1:

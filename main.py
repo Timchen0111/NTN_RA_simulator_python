@@ -628,8 +628,8 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01, US
         ctrl.add_satellite(sat) #Controller只加入active_sat_pool裡的衛星
         sat.assign_id(i) #為每個衛星分配新的ID
     ctrl.set_agent() #在加入衛星後初始化Agent，讓Agent知道目前的衛星列表和數量
-    if MODE != 1:
-        NUM_EPOCHS = 1 #如果不是RL模式，就只跑一個epoch，因為不需要訓練過程
+    if MODE not in (1, 3, 4):
+        NUM_EPOCHS = 1 #MODE 1/3/4 保留相同流程；其他模式只跑一個 epoch。
 
     each_epo_plr = []
     each_epo_thr = []
@@ -724,7 +724,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01, US
             #Controller-side processing
             ctrl.set_group_probabilities_for_rao(
                 n,
-                use_convex_solver=(MODE == 1),
+                use_convex_solver=(MODE in (1, 3, 4)), # MODE4 currently mirrors MODE1 until its new baseline is added.
                 imbalance_epsilon=IMBALANCE_EPSILON,
             )
             # Compute the precomputed p_s from the group selection policy; optionally replace it with lagged real p_s for control.
