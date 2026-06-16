@@ -73,20 +73,20 @@ class controller:
         self.actualLambda = sum(actual_lambda)
         #print(f"Total load estimation: Lambda={sum(Lambda)}, Actual Lambda={sum(actual_lambda)}")
         return Lambda
-    def backoff_control(self, total_load, rho, p_d, p_s, K, Z, MODE,n):
+    def backoff_control(self, total_load, rho, p_d, p_s, K, Z, backoff_mode,n):
         #實作backoff control
         denominator = np.sum(self.observe_pi * (1 - self.p_b)) *p_s
         #denominator = np.sum(self.actualPi[1:] * (1 - self.p_b)) *p_s
         N_tilde = self.N_estimation(Lambda=total_load, denominator=denominator)
         self.N_estimate = N_tilde
         #N_tilde = 10000 #丟真值測試用
-        self.p_b, self.observe_pi = backoff_control.backoff_control(N_tilde, self.p_b, rho, self.Dmax, p_d, p_s, K, Z, MODE, total_load)
+        self.p_b, self.observe_pi = backoff_control.backoff_control(N_tilde, self.p_b, rho, self.Dmax, p_d, p_s, K, Z, backoff_mode, total_load)
         if n % 10 == 0:
             #print(f"Actual Pi: {self.actualPi}, Observed Pi: {self.observe_pi}")
             self.actual.append(list(self.actualPi))
         #print(f"Backoff control updated: p_b={self.p_b}, pi={self.observe_pi}")
         return
-    def satellite_selection(self, Lambda,MODE,n,target_location,t,epoch):
+    def satellite_selection(self, Lambda,MODE,n,target_location,t):
         avg_load = np.mean(Lambda)
         reward = -np.mean((Lambda - avg_load) ** 2)
         self.history_reward.append(reward)
@@ -96,7 +96,6 @@ class controller:
         return
     def N_estimation(self, Lambda, denominator):
         current_N = self.rls.update(Lambda, denominator)
-        #current_N = Lambda/denominator if denominator > 0 else self.N_estimate #測試用
         return current_N
     def reset_agent(self):
         self.last_state = None
@@ -165,6 +164,8 @@ class UE:
         self.delay = 0
         self.loss = 0
         self.success = 0
+        self.current_delay_raos = 0
+        self.success_delay_raos = []
         self.group = None #這個UE被分配到的衛星群組，初始為None，之後會根據可見衛星列表更新
         self.transmission_success = 0 #實際成功傳輸的次數，減掉self.success後就是碰撞次數
         self.transmission_fail = 0
@@ -198,7 +199,7 @@ class UE:
         self.all_satellites = list(sat_list)
         self.angle = np.zeros(len(sat_list))        
         self.distance = np.zeros(len(sat_list))
-        if mode == 6 or mode == 7:
+        if mode == 2:
             self.fixed_channel_success_prob = 1.0
             for sat in sat_list:
                 self.visible_satellites.append(sat) #全部都看的到
@@ -224,10 +225,12 @@ class UE:
     def new_time(self,bursty):
         if self.active == True:
             self.delay += 1
+            self.current_delay_raos += 1
             if self.delay >= self.budget:
                 self.active = False
                 self.loss += 1
                 self.delay = 0
+                self.current_delay_raos = 0
         else:
             if bursty:
                 self.new_packet()
@@ -236,6 +239,7 @@ class UE:
         r = np.random.rand()
         self.budget = np.random.choice([1, 2, 3, 4, 5], p=self.QoS_requirement) #根據QoS需求隨機分配delay budget
         self.delay = 0
+        self.current_delay_raos = 1
         self.target_satellite = None
     def acquire_SIB(self,ctrl):
         #取得系統資訊，包含backoff機率和衛星選擇資訊
@@ -261,6 +265,7 @@ class UE:
             self.active = False
             self.loss += 1
             self.delay = 0
+            self.current_delay_raos = 0
             return
 
         if r < self.p_b[remaining_budget - 1]:
@@ -315,6 +320,8 @@ class UE:
             # 成功接入，重置狀態
             self.active = False
             self.success += 1
+            self.success_delay_raos.append(self.current_delay_raos)
+            self.current_delay_raos = 0
         else:
             # 碰撞失敗，保持 active，下回合 delay 會增加
             pass
@@ -436,7 +443,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
         return 0
 
     sat_snapshot = list(sat_list)
-    if mode == 6 or mode == 7:
+    if mode == 2:
         # 此次 2026/6/9 凌晨 visibility 加速修改：保留 ideal mode 的原始語意，所有 UE 都視為可見全部衛星。
         for ue in ue_list:
             ue.visible_satellites = list(sat_snapshot)
@@ -579,11 +586,21 @@ def load_ps_tables(filename="group_ps_table.npz"):
     print(f"Group ps table shape: {group_ps_table.shape}")
     return group_weight_table, group_ps_table
 
-def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False):
+def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
+    if MODE == 0:
+        selection_mode = 0
+        backoff_mode = 0
+    else:
+        selection_mode = MODE[0]
+        backoff_mode = MODE[1]
     print(f"--- Simulation Start ---")
     print(f"Mode: {MODE}, Active rate: {RHO},  Time Slots: {SECONDS}")
+    if selection_mode == 0:
+        print("Mode 0: visibility heterogeneity test")
+    else:
+        print(f"Selection mode: {selection_mode}, Backoff mode: {backoff_mode}")
     print(f"Satellite selection imbalance epsilon: {IMBALANCE_EPSILON}")
     print(f"Use lagged real p_s: {USE_REAL_PS}")
     
@@ -628,215 +645,193 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, NUM_EPOCHS, IMBALANCE_EPSILON=0.01, US
         ctrl.add_satellite(sat) #Controller只加入active_sat_pool裡的衛星
         sat.assign_id(i) #為每個衛星分配新的ID
     ctrl.set_agent() #在加入衛星後初始化Agent，讓Agent知道目前的衛星列表和數量
-    if MODE not in (1, 3, 4):
-        NUM_EPOCHS = 1 #MODE 1/3/4 保留相同流程；其他模式只跑一個 epoch。
-
-    each_epo_plr = []
-    each_epo_thr = []
-    each_epo_reward = []
     expected_tables = Load_estimator.precompute_expected_tables(Z=sat_list[0].Z, Nmax=1000) #預計算期望值表，傳入Z值和Nmax上限
-    visibility_recorder = {}
-    for epoch in range(NUM_EPOCHS): #目前只跑一個epoch，之後可以增加多個epoch來觀察學習趨勢
-        n_history = [] # 記錄每個 Slot 的 N_estimate
-        if epoch == 0:
-            ue_list = []
-            R_km = 200.0  # 想要維持強烈幾何落差，建議設 200.0 ~ 300.0 km
-            c = [25.03, 121.56] # 台北中心點
+    n_history = [] # 記錄每個 Slot 的 N_estimate
+    ue_list = []
+    R_km = 200.0  # 想要維持強烈幾何落差，建議設 200.0 ~ 300.0 km
+    c = [25.03, 121.56] # 台北中心點
 
-            # 2. 將公里半徑轉換為經緯度的最大邊界（軸向縮放）
-            lat_bound = R_km / 111.0
-            lon_bound = R_km / 100.0
-            for i in range(NUM_UE):
-                # 3. 圓形均勻抽樣
-                r = np.sqrt(np.random.uniform(0, 1)) # sqrt 確保地表真均勻分佈（不會往中心擠）
-                theta = np.random.uniform(0, 2 * np.pi)
-                # 4. 映射回實際經緯度
-                lat = c[0] + (r * np.sin(theta)) * lat_bound
-                lon = c[1] + (r * np.cos(theta)) * lon_bound
-                
-                ue_list.append(UE(location=[lat, lon], id=i, rho=RHO))
-                ctrl.ue_list = ue_list #將UE列表傳給controller，讓controller可以在需要的時候訪問UE資訊
-            # 重置 controller 的暫存狀態
-        ctrl.reset_agent()
-        throughput_history = []
-        last_real_p_s = None
-        ps_history = []
+    # 2. 將公里半徑轉換為經緯度的最大邊界（軸向縮放）
+    lat_bound = R_km / 111.0
+    lon_bound = R_km / 100.0
+    for i in range(NUM_UE):
+        # 3. 圓形均勻抽樣
+        r = np.sqrt(np.random.uniform(0, 1)) # sqrt 確保地表真均勻分佈（不會往中心擠）
+        theta = np.random.uniform(0, 2 * np.pi)
+        # 4. 映射回實際經緯度
+        lat = c[0] + (r * np.sin(theta)) * lat_bound
+        lon = c[1] + (r * np.cos(theta)) * lon_bound
+        
+        ue_list.append(UE(location=[lat, lon], id=i, rho=RHO))
+    ctrl.ue_list = ue_list #將UE列表傳給controller，讓controller可以在需要的時候訪問UE資訊
+
+    ctrl.reset_agent()
+    throughput_history = []
+    last_real_p_s = None
+    ps_history = []
+    for ue in ue_list:
+        ue.acb_selection_count = 0
+        ue.acb_policy_fallback_count = 0
+    #重置衛星狀態
+    for sat in active_sat_pool:
+        sat.ue_pre = {}
+        sat.N_i = sat.N_s = sat.N_c = 0
+        sat.actual_lambda = 0
+
+    for n in range(RAO_COUNTS): #統一用n，表示現在是在第幾個RAO
+        # --- 更新時間與產生封包 ---
+        arrival_mask = np.random.rand(NUM_UE) < (RHO * 1000 / trao)
+        for i, ue in enumerate(ue_list):
+            ue.new_time(bursty=arrival_mask[i])
+
+        current_ms = n * trao
+        current_dt = start_dt + timedelta(milliseconds=current_ms)
+        current_t = ts.from_datetime(current_dt)
+        # --- 衛星移動與可見衛星列表更新 ---
+        visible_count = update_visibility_batch(ue_list, active_sat_pool, current_t, selection_mode)
+        avg_visible = visible_count / NUM_UE
+        if n % 50 == 0 and n>0:
+            print(f"RAO {n}: Average visible satellites per UE: {avg_visible:.2f}")
+        if avg_visible < 1:
+            print("Warning: Too few visible satellites on average. The simulation scenario is not feasible. Ending simulation.")
+            return
+        if selection_mode == 0: #測試模式，不是真的跑模擬
+            eval_metrics = evaluate_visibility_heterogeneity(ue_list)
+            return eval_metrics
+        real_counts = np.zeros(5)
+        idle_ue_count=0
         for ue in ue_list:
-            ue.acb_selection_count = 0
-            ue.acb_policy_fallback_count = 0
-        #start_dt = datetime(2026, 2, 12, 20, 42, 0, tzinfo=timezone.utc) #每個epoch重置時間，之後可能會改成從不同時間開始
-        #重置衛星狀態
-        for sat in active_sat_pool:
-            sat.ue_pre = {}
-            sat.N_i = sat.N_s = sat.N_c = 0
-            sat.actual_lambda = 0
-
-        for n in range(RAO_COUNTS): #統一用n，表示現在是在第幾個RAO
-            # --- 更新時間與產生封包 ---
-            arrival_mask = np.random.rand(NUM_UE) < (RHO * 1000 / trao)
-            for i, ue in enumerate(ue_list):
-                ue.new_time(bursty=arrival_mask[i])
-
-            current_ms = n * trao
-            current_dt = start_dt + timedelta(milliseconds=current_ms)
-            current_t = ts.from_datetime(current_dt)
-            # --- 衛星移動與可見衛星列表更新 ---
-            if True: #每5個RAO更新一次可見衛星列表，因為衛星移動不會太快
-                visible_count = 0
-                #sat_visibility_counts = np.zeros(len(active_sat_pool))
-                if epoch == 0:
-                    # 此次 2026/6/9 凌晨 visibility 加速修改：以批次 ECEF/ENU 計算取代逐 UE、逐衛星的 Skyfield altaz 熱點。
-                    visible_count = update_visibility_batch(ue_list, active_sat_pool, current_t, MODE)
-                    record_dict = {}
-                    for ue in ue_list:
-                        #for sat in ue.visible_satellites:
-                            #sat_visibility_counts[sat.id] += 1
-                        record_dict[ue.id] = ue.visible_satellites
-                    visibility_recorder[n] = record_dict
-                else:
-                    for ue in ue_list:
-                        ue.visible_satellites = visibility_recorder[n][ue.id]
-                        visible_count += len(ue.visible_satellites)
-                # 計算變異係數 (CV)，衡量衛星間潛在競爭壓力的不均勻性
-                #cv_visibility = np.std(sat_visibility_counts) / np.mean(sat_visibility_counts)
-                avg_visible = visible_count / NUM_UE
-                if n % 50 == 0 and n>0:
-                    print(f"RAO {n}: Average visible satellites per UE: {avg_visible:.2f}")
-                    #print(f"RAO {n}: Coefficient of Variation for Satellite Visibility: {cv_visibility:.2f}")
-                if avg_visible < 1:
-                    print("Warning: Too few visible satellites on average. The simulation scenario is not feasible. Ending simulation.")
-                    return
-                if MODE == 0: #測試模式，不是真的跑模擬
-                    eval_metrics = evaluate_visibility_heterogeneity(ue_list)
-                    return eval_metrics
-            real_counts = np.zeros(5)
-            idle_ue_count=0
-            for ue in ue_list:
-                if ue.active:
-                    # 取得該 UE 剩餘的延遲預算 
-                    nn = ue.budget - ue.delay
-                    if nn > 0:
-                        real_counts[nn-1] += 1
-                else:
-                    idle_ue_count += 1
-            
-            ctrl.actualPi = np.concatenate(([idle_ue_count / NUM_UE], real_counts / NUM_UE)) #更新真實pi供測試參考，index 0 為 idle state
-            #Controller-side processing
-            ctrl.set_group_probabilities_for_rao(
-                n,
-                use_convex_solver=(MODE in (1, 3, 4)), # MODE4 currently mirrors MODE1 until its new baseline is added.
-                imbalance_epsilon=IMBALANCE_EPSILON,
-            )
-            # Compute the precomputed p_s from the group selection policy; optionally replace it with lagged real p_s for control.
-            if MODE == 6 or MODE == 7:
-                precomputed_p_s = 1.0
+            if ue.active:
+                # 取得該 UE 剩餘的延遲預算 
+                nn = ue.budget - ue.delay
+                if nn > 0:
+                    real_counts[nn-1] += 1
             else:
-                precomputed_p_s = calculate_ps(ctrl,n,group_weight_table, group_ps_table)
-            p_s = last_real_p_s if (USE_REAL_PS and last_real_p_s is not None) else precomputed_p_s
-            #print(f"Precomputed p_s for RAO {n}: {p_s:.4f}")
-            if n == 0:
-                Lambda = np.zeros(ctrl.sat_num)
-                current_n_hat = ctrl.N_estimate
-            else:
-                Lambda = ctrl.load_estimator(expected_tables) #每個RAO都呼叫一次load estimator，並且傳入預計算好的期望值表
-                ctrl.satellite_selection(Lambda=Lambda,MODE=MODE, n=n, target_location=geo, t=current_t, epoch=epoch)
-                ctrl.backoff_control(total_load=sum(Lambda), rho=(RHO * 1000 / trao), p_d = ue_list[0].QoS_requirement, p_s=p_s, K=ctrl.sat_num, Z=sat_list[0].Z,MODE=MODE,n=n)
-                current_n_hat = ctrl.N_estimate
-            n_history.append(current_n_hat)
+                idle_ue_count += 1
+        
+        ctrl.actualPi = np.concatenate(([idle_ue_count / NUM_UE], real_counts / NUM_UE)) #更新真實pi供測試參考，index 0 為 idle state
+        #Controller-side processing
+        ctrl.set_group_probabilities_for_rao(
+            n,
+            use_convex_solver=(selection_mode == 1),
+            imbalance_epsilon=IMBALANCE_EPSILON,
+        )
+        # Compute the precomputed p_s from the group selection policy; optionally replace it with lagged real p_s for control.
+        if selection_mode == 2:
+            precomputed_p_s = 1.0
+        else:
+            precomputed_p_s = calculate_ps(ctrl,n,group_weight_table, group_ps_table)
+        p_s = last_real_p_s if (USE_REAL_PS and last_real_p_s is not None) else precomputed_p_s
+        #print(f"Precomputed p_s for RAO {n}: {p_s:.4f}")
+        if n == 0:
+            Lambda = np.zeros(ctrl.sat_num)
+            current_n_hat = ctrl.N_estimate
+        else:
+            Lambda = ctrl.load_estimator(expected_tables) #每個RAO都呼叫一次load estimator，並且傳入預計算好的期望值表
+            ctrl.satellite_selection(Lambda=Lambda,MODE=selection_mode, n=n, target_location=geo, t=current_t)
+            ctrl.backoff_control(total_load=sum(Lambda), rho=(RHO * 1000 / trao), p_d = ue_list[0].QoS_requirement, p_s=p_s, K=ctrl.sat_num, Z=sat_list[0].Z,backoff_mode=backoff_mode,n=n)
+            current_n_hat = ctrl.N_estimate
+        n_history.append(current_n_hat)
+        
+        if n % 50 == 0:
+            print(f"Current N_tilde: {ctrl.N_estimate}, Total Load (Lambda): {sum(Lambda)}, Backoff rate: {ctrl.p_b}", end='\n')
+
+        for ue in ue_list:
+            if ue.active: #只對active的UE計算ACB和決定順序
+                ue.acquire_SIB(ctrl)
+
+        # 中文註解：記錄本輪 UE 執行 RA 前的通道成功/失敗累積值，用來計算本輪真實 p_s。
+        channel_success_before = sum(ue.transmission_success for ue in ue_list)
+        channel_fail_before = sum(ue.transmission_fail for ue in ue_list)
+
+        # UE-side processing
+        for ue in ue_list:
+            # 如果通過 ACB，會呼叫 sat.receive_preamble()
+            if ue.active: 
+                ue.ACB_test()
+
+        # 中文註解：真實 p_s 定義為本輪實際嘗試 RA 的 UE 中，通道判定成功的比例；若本輪無嘗試則不計算。
+        channel_success_after = sum(ue.transmission_success for ue in ue_list)
+        channel_fail_after = sum(ue.transmission_fail for ue in ue_list)
+        slot_channel_success = channel_success_after - channel_success_before
+        slot_channel_fail = channel_fail_after - channel_fail_before
+        slot_channel_attempts = slot_channel_success + slot_channel_fail
+        if slot_channel_attempts > 0:
+            real_p_s = slot_channel_success / slot_channel_attempts
+            last_real_p_s = real_p_s
+            ps_history.append({
+                "time_slot": n,
+                "real": real_p_s,
+                "precomputed": precomputed_p_s,
+                "control": p_s,
+                "error": real_p_s - precomputed_p_s,
+            })
+            if n % 50 == 0:
+                print(
+                    f"RAO {n}: Real p_s={real_p_s:.4f}, "
+                    f"Precomputed p_s={precomputed_p_s:.4f}, "
+                    f"Control p_s={p_s:.4f}, "
+                    f"Diff={real_p_s - precomputed_p_s:+.4f}"
+                )
+        #else:
+            #print(f"RAO {n}: Real p_s=N/A (no RA attempts), Precomputed p_s={p_s:.4f}")
             
-            if n % 50 == 0:
-                print(f"Current N_tilde: {ctrl.N_estimate}, Total Load (Lambda): {sum(Lambda)}, Backoff rate: {ctrl.p_b}", end='\n')
+        # [新增] 進度條與監控資訊 (每 50 slots 印一次)
+        if n % 50 == 0:
+            # 計算當前統計數據
+            active_count = sum(u.active for u in ue_list)
+            # 計算平均可視衛星數
+            avg_vis_sats = np.mean([len(u.visible_satellites) for u in ue_list])
+            # 使用 \r 讓同一行刷新，不會洗版
+            print(f"Slot {n}/{RAO_COUNTS} | Active: {active_count:3d} | AvgVisSat: {avg_vis_sats:.1f}", end='\r')
+        # --- 衛星端處理 (碰撞檢測) ---
+        total_success_ids_in_this_slot = []
+        for sat in sat_list:
+            # 回傳該衛星成功接收的 UE ID 列表
+            successes = sat.check_RA_success()
+            total_success_ids_in_this_slot.extend(successes)
 
-            for ue in ue_list:
-                if ue.active: #只對active的UE計算ACB和決定順序
-                    ue.acquire_SIB(ctrl)
+        # 記錄本時間點的總吞吐量
+        throughput_history.append(len(total_success_ids_in_this_slot))
 
-            # 中文註解：記錄本輪 UE 執行 RA 前的通道成功/失敗累積值，用來計算本輪真實 p_s。
-            channel_success_before = sum(ue.transmission_success for ue in ue_list)
-            channel_fail_before = sum(ue.transmission_fail for ue in ue_list)
+        # --- 回傳結果給 UE (更新狀態) ---
+        for ue in ue_list:
+            if ue.active: #只有active的UE才會收到反饋，並且可能改變狀態
+                ue.receive_feedback(total_success_ids_in_this_slot)
+    # 統計結果
+    total_success_packets = sum(throughput_history)
+    total_lost_packets = sum(ue.loss for ue in ue_list)
+    success_delay_raos = [
+        delay_raos
+        for ue in ue_list
+        for delay_raos in ue.success_delay_raos
+    ]
+    avg_delay_ms = np.mean(success_delay_raos) * trao if len(success_delay_raos) > 0 else np.nan
+    channel_failure_rates = sum(ue.transmission_fail for ue in ue_list) / (sum(ue.transmission_success for ue in ue_list) + sum(ue.transmission_fail for ue in ue_list))
+    policy_fallback_count = sum(ue.acb_policy_fallback_count for ue in ue_list)
+    acb_selection_count = sum(ue.acb_selection_count for ue in ue_list)
+    policy_fallback_rate = policy_fallback_count / acb_selection_count if acb_selection_count > 0 else 0.0
+    avg_throughput = total_success_packets / (RAO_COUNTS * trao / 1000)  # packets per second
+    plr = 1 - total_success_packets/(total_success_packets+total_lost_packets)
+    print(f"----------Simulation Complete.----------")
+    print(f"Total Successful Accesses: {total_success_packets}")
+    print(f"Total Dropped Packets: {total_lost_packets}")
+    print(f"Average Throughput (packets/second): {avg_throughput:.2f}")
+    print(f"Packet Loss Rate: {plr:.4f}")
+    print(f"AverageDelay (ms): {avg_delay_ms:.2f}" if np.isfinite(avg_delay_ms) else "AverageDelay (ms): N/A")
+    print(f"Channel Failure Rate: {channel_failure_rates:.4f}")
+    print(f"ACB Policy Fallback Frequency: {policy_fallback_count}/{acb_selection_count} ({policy_fallback_rate:.4f})")
 
-            # UE-side processing
-            for ue in ue_list:
-                # 如果通過 ACB，會呼叫 sat.receive_preamble()
-                if ue.active: 
-                    ue.ACB_test()
-
-            # 中文註解：真實 p_s 定義為本輪實際嘗試 RA 的 UE 中，通道判定成功的比例；若本輪無嘗試則不計算。
-            channel_success_after = sum(ue.transmission_success for ue in ue_list)
-            channel_fail_after = sum(ue.transmission_fail for ue in ue_list)
-            slot_channel_success = channel_success_after - channel_success_before
-            slot_channel_fail = channel_fail_after - channel_fail_before
-            slot_channel_attempts = slot_channel_success + slot_channel_fail
-            if slot_channel_attempts > 0:
-                real_p_s = slot_channel_success / slot_channel_attempts
-                last_real_p_s = real_p_s
-                ps_history.append({
-                    "time_slot": n,
-                    "real": real_p_s,
-                    "precomputed": precomputed_p_s,
-                    "control": p_s,
-                    "error": real_p_s - precomputed_p_s,
-                })
-                if n % 50 == 0:
-                    print(
-                        f"RAO {n}: Real p_s={real_p_s:.4f}, "
-                        f"Precomputed p_s={precomputed_p_s:.4f}, "
-                        f"Control p_s={p_s:.4f}, "
-                        f"Diff={real_p_s - precomputed_p_s:+.4f}"
-                    )
-            #else:
-                #print(f"RAO {n}: Real p_s=N/A (no RA attempts), Precomputed p_s={p_s:.4f}")
-                
-            # [新增] 進度條與監控資訊 (每 50 slots 印一次)
-            if n % 50 == 0:
-                # 計算當前統計數據
-                active_count = sum(u.active for u in ue_list)
-                # 計算平均可視衛星數
-                avg_vis_sats = np.mean([len(u.visible_satellites) for u in ue_list])
-                # 使用 \r 讓同一行刷新，不會洗版
-                print(f"Slot {n}/{RAO_COUNTS} | Active: {active_count:3d} | AvgVisSat: {avg_vis_sats:.1f}", end='\r')
-            # --- 衛星端處理 (碰撞檢測) ---
-            total_success_ids_in_this_slot = []
-            for sat in sat_list:
-                # 回傳該衛星成功接收的 UE ID 列表
-                successes = sat.check_RA_success()
-                total_success_ids_in_this_slot.extend(successes)
-
-            # 記錄本時間點的總吞吐量
-            throughput_history.append(len(total_success_ids_in_this_slot))
-
-            # --- 回傳結果給 UE (更新狀態) ---
-            for ue in ue_list:
-                if ue.active: #只有active的UE才會收到反饋，並且可能改變狀態
-                    ue.receive_feedback(total_success_ids_in_this_slot)
-        # [更改 5] 週期結束後的統計與模型存檔
-        # 統計結果
-        total_success_packets = sum(throughput_history)
-        total_lost_packets = sum(ue.loss for ue in ue_list)
-        channel_failure_rates = sum(ue.transmission_fail for ue in ue_list) / (sum(ue.transmission_success for ue in ue_list) + sum(ue.transmission_fail for ue in ue_list))
-        policy_fallback_count = sum(ue.acb_policy_fallback_count for ue in ue_list)
-        acb_selection_count = sum(ue.acb_selection_count for ue in ue_list)
-        policy_fallback_rate = policy_fallback_count / acb_selection_count if acb_selection_count > 0 else 0.0
-        avg_throughput = total_success_packets / (RAO_COUNTS * trao / 1000)  # packets per second
-        plr = 1 - total_success_packets/(total_success_packets+total_lost_packets)
-        print(f"----------Episode {epoch+1} Complete.----------")
-        print(f"Total Successful Accesses: {total_success_packets}")
-        print(f"Total Dropped Packets: {total_lost_packets}")
-        print(f"Average Throughput (packets/second): {avg_throughput:.2f}")
-        print(f"Packet Loss Rate: {plr:.4f}")
-        print(f"Channel Failure Rate: {channel_failure_rates:.4f}")
-        print(f"ACB Policy Fallback Frequency: {policy_fallback_count}/{acb_selection_count} ({policy_fallback_rate:.4f})")
-
-        each_epo_plr.append(plr)
-        each_epo_thr.append(avg_throughput)
-        each_epo_reward.append(np.mean(ctrl.history_reward))
-    epo_history = {
-        "throughput": each_epo_thr,
-        "plr": each_epo_plr,
-        "reward": each_epo_reward,
+    run_history = {
+        "throughput": avg_throughput,
+        "plr": plr,
+        "AverageDelay": avg_delay_ms,
+        "average_delay_ms": avg_delay_ms,
+        "average_delay_raos": np.mean(success_delay_raos) if len(success_delay_raos) > 0 else np.nan,
+        "reward": np.mean(ctrl.history_reward),
         "ps_history": ps_history,
     }
-    return avg_throughput, plr, n_history, ctrl.actual, ctrl.observe_pi, ctrl.history_reward, epo_history #印出最後一個epoch的效能
+    return avg_throughput, plr, n_history, ctrl.actual, ctrl.observe_pi, ctrl.history_reward, run_history
 
 
     
