@@ -14,18 +14,18 @@ if RUN_RHO_SWEEP:
     USE_REAL_PS = False
     RHO_VALUES = np.array([0.005, 0.01, 0.015, 0.02, 0.025])
     MODES = [
-        ([1, 1], "MODE[1,1] Proposed"),
-        ([1, 2], "MODE[1,2] Dynamic ACB"),
-        ([1, 3], "MODE[1,3] State-aware P-ACB"),
+        ([1, 1], "Proposed"),
+        ([1, 2], "Dynamic ACB"),
+        ([1, 3], "State-aware P-ACB"),
     ]
 
-    # Backoff modes 2 and 3 are ACB baselines; all other experiment parameters are
-    # kept identical to MODE[1,1] so the PLR curves isolate the backoff controller.
+    # Backoff settings 2 and 3 are ACB baselines; all other experiment parameters are
+    # kept identical to the proposed setting so the PLR curves isolate the backoff controller.
     rho_results = {label: [] for _, label in MODES}
     for mode, label in MODES:
         for rho in RHO_VALUES:
-            print(f"\nRunning PLR rho sweep: mode={mode}, rho={rho}")
-            avg_throughput, plr, n_history, actual_pi, observe_pi, reward_history, run_history = main.main(
+            print(f"\nRunning PLR rho sweep: {label}, rho={rho}")
+            avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
                 rho,
                 SECONDS,
                 NUM_UE,
@@ -82,7 +82,7 @@ if RUN_RHO_SWEEP:
     plt.tight_layout()
     plt.show()
 
-    print("\n--- MODE[1,1] vs MODE[1,2] vs MODE[1,3] PLR Rho Sweep Complete ---")
+    print("\n--- Rho Sweep Complete ---")
     for _, label in MODES:
         for item in rho_results[label]:
             print(
@@ -106,7 +106,7 @@ if epsilon_sweep:
 
     for eps in EPSILON_VALUES:
         print(f"\nRunning epsilon sweep: epsilon={eps}")
-        avg_throughput, plr, n_history, actual_pi, observe_pi, reward_history, run_history = main.main(
+        avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
             EPSILON_RHO,
             EPSILON_SECONDS,
             EPSILON_NUM_UE,
@@ -119,44 +119,49 @@ if epsilon_sweep:
             "plr": plr,
             "throughput": avg_throughput,
             "average_delay_ms": run_history.get("average_delay_ms", np.nan),
-            "reward": np.mean(reward_history) if len(reward_history) > 0 else np.nan,
+            "load_variance": -np.mean(load_imbalance_history) if len(load_imbalance_history) > 0 else np.nan,
         })
 
     epsilon_labels = [str(item["epsilon"]) for item in epsilon_results]
     epsilon_plr = [item["plr"] for item in epsilon_results]
     epsilon_throughput = [item["throughput"] for item in epsilon_results]
     epsilon_delay = [item["average_delay_ms"] for item in epsilon_results]
-    epsilon_reward = [item["reward"] for item in epsilon_results]
+    epsilon_load_variance = [item["load_variance"] for item in epsilon_results]
 
-    fig, axes = plt.subplots(2, 2, figsize=(18, 10))
-    axes = axes.ravel()
-    fig.suptitle("Convex Selection Epsilon Sweep", fontsize=16)
+    plt.figure(figsize=(10, 6))
+    plt.plot(epsilon_labels, epsilon_plr, marker="o", color="#3498db")
+    plt.title("Packet Loss Rate under Imbalance Epsilon")
+    plt.xlabel("Imbalance epsilon")
+    plt.ylabel("PLR")
+    plt.grid(True, linestyle=":", alpha=0.6)
+    plt.tight_layout()
+    plt.show()
 
-    axes[0].plot(epsilon_labels, epsilon_plr, marker="o", color="#3498db")
-    axes[0].set_title("Packet Loss Rate")
-    axes[0].set_xlabel("Imbalance epsilon")
-    axes[0].set_ylabel("PLR")
-    axes[0].grid(True, linestyle=":", alpha=0.6)
+    plt.figure(figsize=(10, 6))
+    plt.plot(epsilon_labels, epsilon_throughput, marker="o", color="#27ae60")
+    plt.title("Average Throughput under Imbalance Epsilon")
+    plt.xlabel("Imbalance epsilon")
+    plt.ylabel("Packets / Second")
+    plt.grid(True, linestyle=":", alpha=0.6)
+    plt.tight_layout()
+    plt.show()
 
-    axes[1].plot(epsilon_labels, epsilon_throughput, marker="o", color="#27ae60")
-    axes[1].set_title("Average Throughput")
-    axes[1].set_xlabel("Imbalance epsilon")
-    axes[1].set_ylabel("Packets / Second")
-    axes[1].grid(True, linestyle=":", alpha=0.6)
+    plt.figure(figsize=(10, 6))
+    plt.plot(epsilon_labels, epsilon_delay, marker="o", color="#8e44ad")
+    plt.title("AverageDelay under Imbalance Epsilon")
+    plt.xlabel("Imbalance epsilon")
+    plt.ylabel("ms")
+    plt.grid(True, linestyle=":", alpha=0.6)
+    plt.tight_layout()
+    plt.show()
 
-    axes[2].plot(epsilon_labels, epsilon_delay, marker="o", color="#8e44ad")
-    axes[2].set_title("AverageDelay")
-    axes[2].set_xlabel("Imbalance epsilon")
-    axes[2].set_ylabel("ms")
-    axes[2].grid(True, linestyle=":", alpha=0.6)
-
-    axes[3].plot(epsilon_labels, epsilon_reward, marker="o", color="#f39c12")
-    axes[3].set_title("Average Reward")
-    axes[3].set_xlabel("Imbalance epsilon")
-    axes[3].set_ylabel("Reward")
-    axes[3].grid(True, linestyle=":", alpha=0.6)
-
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.figure(figsize=(10, 6))
+    plt.plot(epsilon_labels, epsilon_load_variance, marker="o", color="#f39c12")
+    plt.title("Load Variance Across Satellites under Imbalance Epsilon")
+    plt.xlabel("Imbalance epsilon")
+    plt.ylabel("Load Variance Across Satellites")
+    plt.grid(True, linestyle=":", alpha=0.6)
+    plt.tight_layout()
     plt.show()
 
     print("\n--- Epsilon Sweep Complete ---")
@@ -166,7 +171,7 @@ if epsilon_sweep:
             f"PLR={item['plr']:.4f}, "
             f"throughput={item['throughput']:.2f}, "
             f"avg_delay_ms={item['average_delay_ms']:.2f}, "
-            f"reward={item['reward']:.4f}"
+            f"load_variance_across_satellites={item['load_variance']:.4f}"
         )
     raise SystemExit
 
@@ -175,17 +180,18 @@ if epsilon_sweep:
 num = 10000
 m = [1, 1]
 USE_REAL_PS = False
-result_key = "MODE[1,1]"
+result_key = "Proposed"
 results = {}
-# MODE[1,1]: proposed satellite selection, state-aware P-ACB backoff
+# Proposed satellite selection and backoff control.
 a, b, c, d, e, f, g = main.main(0.01, 2, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {
     "N_tilde": c,
     "Pi": d,
     "Loads": a,
     "SuccessRate": b,
-    "Reward": f,
+    "LoadVarianceHistory": load_variance_history,
     "TruePi": e,
     "RunHistory": g,
 }
@@ -215,12 +221,12 @@ plt.axhline(y=num, color="black", linestyle="--", label=f"True N ({num})", alpha
 plt.plot(
     range(len(results[result_key]["N_tilde"])),
     results[result_key]["N_tilde"],
-    label="MODE[1,1]: State-aware P-ACB",
+    label="Proposed",
     color="blue",
     linewidth=1.5,
 )
 
-plt.title("Population Estimation Convergence (N_tilde) - MODE[1,1] Only")
+plt.title("Population Estimation Convergence")
 plt.xlabel("Time Slot (n)")
 plt.ylabel("Estimated Population")
 plt.grid(True, alpha=0.3)
@@ -230,16 +236,16 @@ plt.show()
 
 plt.figure(figsize=(10, 6))
 plt.plot(
-    range(len(results[result_key]["Reward"])),
-    results[result_key]["Reward"],
-    label="Reward (Negative Variance)",
+    range(len(results[result_key]["LoadVarianceHistory"])),
+    results[result_key]["LoadVarianceHistory"],
+    label="Load Variance Across Satellites",
     color="blue",
     linewidth=1.2,
 )
 
-plt.title("Reward Variation over Time Slots")
+plt.title("Load Variance Across Satellites over Time Slots")
 plt.xlabel("Time Slot (n)")
-plt.ylabel("Reward (-Var)")
+plt.ylabel("Load Variance Across Satellites")
 plt.grid(True, alpha=0.3)
 plt.legend()
 plt.show()
