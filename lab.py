@@ -178,7 +178,7 @@ USE_REAL_PS = False
 result_key = "MODE[1,1]"
 results = {}
 # MODE[1,1]: proposed satellite selection, state-aware P-ACB backoff
-a, b, c, d, e, f, g = main.main(0.01, 100, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(0.01, 2, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
 
 results[result_key] = {
     "N_tilde": c,

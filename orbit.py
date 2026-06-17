@@ -1,6 +1,6 @@
 import numpy as np
 from skyfield.api import load, wgs84
-import os
+from scenario_time import TLE_FILENAME, TLE_URL, get_tle_scenario_metadata, load_starlink_tles
 
 # 增加 top_n 參數，預設為 4
 def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4):
@@ -10,17 +10,17 @@ def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4)
     """
     
     # 1. 指定固定的檔名
-    local_filename = 'starlink_tle.txt'
+    local_filename = TLE_FILENAME
     
     if tle_url is None:
-        tle_url = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle'
+        tle_url = TLE_URL
     
     #print("[Step 1] Loading TLE data...")
     
     # --- [修改邏輯] 簡單粗暴：檔案不在才下載 ---
     # os.path.exists(local_filename) 會回傳 True 或 False
     # 我們只需要在它回傳 False (檔案不存在) 時，讓 reload=True
-    need_download = not os.path.exists(local_filename)
+    need_download = None
     '''
     if need_download:
         print(f"[System] Local file '{local_filename}' not found. Downloading...")
@@ -29,7 +29,7 @@ def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4)
     '''
     try:
         # Skyfield 會自動處理：若 reload=False，它會直接讀本地檔
-        satellites = load.tle_file(tle_url, filename=local_filename, reload=need_download)
+        satellites = load_starlink_tles(tle_url=tle_url, filename=local_filename, reload=need_download)
     except Exception as e:
         print(f"[Error] Failed to load TLE: {e}")
         return []
@@ -133,13 +133,11 @@ def get_relevant_rail_planes(start_time, location_latlon, tle_url=None, top_n=4)
 
 # --- Test Block ---
 if __name__ == "__main__":
-    from datetime import datetime, timezone
-    
     taipei = wgs84.latlon(25.03, 121.56)
     ts = load.timescale()
-    
-    # Ensure this matches your golden window time
-    t = ts.from_datetime(datetime(2026, 2, 12, 20, 42, 0, tzinfo=timezone.utc)) 
+    scenario_metadata = get_tle_scenario_metadata()
+    t = ts.from_datetime(scenario_metadata["start_dt"])
+    print(f"Scenario start time from TLE median epoch: {scenario_metadata['start_dt_iso']}")
     
     # 呼叫時可以指定 top_n，預設為 4
     my_sats = get_relevant_rail_planes(t, taipei, top_n=4)

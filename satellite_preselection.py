@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from skyfield.api import load, wgs84
 import orbit
 from main import channel_visibility
+from scenario_time import as_utc_datetime, get_tle_scenario_metadata
 
 
 def save_satellite_pool(real_sats, filename="fixed_satellite_pool.json"):
@@ -125,8 +126,15 @@ def compute_group_ps_table(
     seconds,
     trao_ms,
     sample_locations,
-    filename="group_ps_table.npz"
+    filename="group_ps_table.npz",
+    scenario_metadata=None
 ):
+    if scenario_metadata is None:
+        scenario_metadata = get_tle_scenario_metadata()
+    if as_utc_datetime(start_dt) != scenario_metadata["start_dt"]:
+        raise ValueError(
+            "Preselection start_dt must come from the current TLE scenario metadata."
+        )
     ts = load.timescale()
 
     num_rao = seconds * 1000 // trao_ms
@@ -135,12 +143,14 @@ def compute_group_ps_table(
 
     group_weight_table = []
     group_ps_table = []
+    mode3_visible_random_ps_table = []
 
     for n in range(num_rao):
         current_dt = start_dt + timedelta(milliseconds=n * trao_ms)
         current_t = ts.from_datetime(current_dt)
         group_count = {}
         group_ps_sum = {}
+        mode3_visible_random_ps_sum = 0.0
         for loc in sample_locations:
             angles = np.zeros(num_sat)
             distances = np.zeros(num_sat)
@@ -154,6 +164,10 @@ def compute_group_ps_table(
                 angles[k] = angle
                 distances[k] = dist_km
                 ps_vector[k] = estimate_channel_success_probability(angle, dist_km)
+            visible_mask = angles > 10 #以後統一規定10度以上才算visible
+            if np.any(visible_mask):
+                # Mode 3 baseline: uniform random selection over UE-visible satellites.
+                mode3_visible_random_ps_sum += float(np.mean(ps_vector[visible_mask]))
             top2 = np.argsort(angles)[::-1][:2]
             group = (int(top2[0]), int(top2[1]))
             if group not in group_count:
@@ -171,6 +185,7 @@ def compute_group_ps_table(
 
         group_weight_table.append(weights)
         group_ps_table.append(ps_by_group)
+        mode3_visible_random_ps_table.append(mode3_visible_random_ps_sum / num_points)
 
         if n % 10 == 0:
             print(f"RAO {n}/{num_rao}: groups = {len(weights)}")
@@ -179,7 +194,13 @@ def compute_group_ps_table(
         filename,
         group_weight_table=np.array(group_weight_table, dtype=object),
         group_ps_table=np.array(group_ps_table, dtype=object),
+        mode3_visible_random_ps_table=np.array(mode3_visible_random_ps_table, dtype=float),
         sat_norad_ids=np.array([int(sat.model.satnum) for sat in real_sats]),
+        scenario_start_dt_iso=scenario_metadata["start_dt_iso"],
+        tle_epoch_min_iso=scenario_metadata["tle_epoch_min_iso"],
+        tle_epoch_max_iso=scenario_metadata["tle_epoch_max_iso"],
+        tle_epoch_median_iso=scenario_metadata["tle_epoch_median_iso"],
+        tle_file_sha256=scenario_metadata["tle_file_sha256"],
         seconds=seconds,
         trao_ms=trao_ms,
         num_points=num_points
@@ -191,11 +212,9 @@ def main(NUM_SAT):
     np.random.seed(42)
 
     ts = load.timescale()
-
-    start_dt = datetime(
-        2026, 2, 12, 20, 42, 0,
-        tzinfo=timezone.utc
-    )
+    scenario_metadata = get_tle_scenario_metadata()
+    start_dt = scenario_metadata["start_dt"]
+    print(f"Scenario start time from TLE median epoch: {scenario_metadata['start_dt_iso']}")
 
     t_start = ts.from_datetime(start_dt)
 
@@ -231,7 +250,8 @@ def main(NUM_SAT):
         seconds=200,
         trao_ms=100,
         sample_locations=sample_locations,
-        filename="group_ps_table.npz"
+        filename="group_ps_table.npz",
+        scenario_metadata=scenario_metadata
     )
 
 if __name__ == "__main__":

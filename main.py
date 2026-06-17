@@ -5,6 +5,7 @@ import orbit
 from datetime import datetime, timezone, timedelta  # 必須有 timedelta
 import Load_estimator, backoff_control, N_estimate, selection
 import json
+from scenario_time import get_tle_scenario_metadata, load_starlink_tles
 
 class controller:
     def __init__(self, group_weight_table=None, group_ps_table=None):
@@ -555,11 +556,7 @@ def load_fixed_satellites(filename="fixed_satellite_pool.json"):
     with open(filename, "r", encoding="utf-8") as f:
         records = json.load(f)
     # 重新載入與 generate_satellite_pool.py 相同的 TLE
-    satellites = load.tle_file(
-        'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle',
-        filename='starlink_tle.txt',
-        reload=False
-    )
+    satellites = load_starlink_tles()
     sat_dict = {
         sat.model.satnum: sat
         for sat in satellites
@@ -574,13 +571,46 @@ def load_fixed_satellites(filename="fixed_satellite_pool.json"):
         real_sats.append(sat_dict[norad_id])
     return real_sats
 
-def load_ps_tables(filename="group_ps_table.npz"):
+def _npz_scalar(data, key):
+    value = data[key]
+    if getattr(value, "shape", None) == ():
+        return value.item()
+    return value
+
+def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expected_sat_norad_ids=None):
     data = np.load(
         filename,
         allow_pickle=True
     )
     group_weight_table = data["group_weight_table"]
     group_ps_table = data["group_ps_table"]
+    if scenario_metadata is not None:
+        required_keys = ["scenario_start_dt_iso", "tle_file_sha256"]
+        for key in required_keys:
+            if key not in data.files:
+                raise ValueError(
+                    f"{filename} does not contain {key}. Regenerate it with satellite_preselection.py."
+                )
+        table_start_dt = str(_npz_scalar(data, "scenario_start_dt_iso"))
+        table_tle_hash = str(_npz_scalar(data, "tle_file_sha256"))
+        if table_start_dt != scenario_metadata["start_dt_iso"]:
+            raise ValueError(
+                f"{filename} start time mismatch. Table={table_start_dt}, "
+                f"TLE-derived scenario={scenario_metadata['start_dt_iso']}."
+            )
+        if table_tle_hash != scenario_metadata["tle_file_sha256"]:
+            raise ValueError(
+                f"{filename} was generated from a different TLE file. Regenerate it."
+            )
+    if expected_sat_norad_ids is not None:
+        if "sat_norad_ids" not in data.files:
+            raise ValueError(f"{filename} does not contain sat_norad_ids. Regenerate it.")
+        table_sat_ids = np.asarray(data["sat_norad_ids"], dtype=int)
+        expected_sat_ids = np.asarray(expected_sat_norad_ids, dtype=int)
+        if not np.array_equal(table_sat_ids, expected_sat_ids):
+            raise ValueError(
+                f"{filename} satellite IDs do not match fixed_satellite_pool.json. Regenerate it."
+            )
     print(f"Loaded {len(group_weight_table)} RAOs")
     print(f"Group weight table shape: {group_weight_table.shape}")
     print(f"Group ps table shape: {group_ps_table.shape}")
@@ -607,12 +637,18 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
     # 設定觀察點 (台北)
     geo = wgs84.latlon(25.03, 121.56)
     ts = load.timescale()
-    start_dt = datetime(2026, 2, 12, 20, 42, 0, tzinfo=timezone.utc)
+    scenario_metadata = get_tle_scenario_metadata()
+    start_dt = scenario_metadata["start_dt"]
+    print(f"Scenario start time from TLE median epoch: {scenario_metadata['start_dt_iso']}")
     #t_start = ts.from_datetime(start_dt)
     real_sats = load_fixed_satellites()
     #設定controller
     #載入其他預運算資料
-    group_weight_table, group_ps_table = load_ps_tables()
+    expected_sat_norad_ids = [int(sat.model.satnum) for sat in real_sats]
+    group_weight_table, group_ps_table = load_ps_tables(
+        scenario_metadata=scenario_metadata,
+        expected_sat_norad_ids=expected_sat_norad_ids,
+    )
     ctrl = controller(group_weight_table=group_weight_table, group_ps_table=group_ps_table)
     # 將真實衛星「封裝」進您的 Simulation Class
     sat_list = []
