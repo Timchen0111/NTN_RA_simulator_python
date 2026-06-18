@@ -626,7 +626,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
         selection_mode = MODE[0]
         backoff_mode = MODE[1]
     print(f"--- Simulation Start ---")
-    print(f"Mode: {MODE}, Active rate: {RHO},  Time Slots: {SECONDS}")
+    print(f"Mode: {MODE}, Arrival rate lambda: {RHO} packets/s,  Time Slots: {SECONDS}")
     if selection_mode == 0:
         print("Mode 0: visibility heterogeneity test")
     else:
@@ -658,6 +658,8 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
     #print(f"Complete building environment: {len(sat_list)} satellites loaded.")
     
     trao = 100
+    rho_rao = 1 - np.exp(-RHO * trao / 1000)
+    print(f"RAO-level arrival probability: {rho_rao:.6f}")
     throughput_history = [] # 記錄每個 Slot 的成功數
     n_history = [] # 記錄每個 Slot 的 N_estimate
     
@@ -716,7 +718,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
 
     for n in range(RAO_COUNTS): #統一用n，表示現在是在第幾個RAO
         # --- 更新時間與產生封包 ---
-        arrival_mask = np.random.rand(NUM_UE) < (RHO * 1000 / trao)
+        arrival_mask = np.random.rand(NUM_UE) < rho_rao
         for i, ue in enumerate(ue_list):
             ue.new_time(bursty=arrival_mask[i])
 
@@ -765,7 +767,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
         else:
             Lambda = ctrl.load_estimator(expected_tables) #每個RAO都呼叫一次load estimator，並且傳入預計算好的期望值表
             ctrl.satellite_selection(Lambda=Lambda,MODE=selection_mode, n=n, target_location=geo, t=current_t)
-            ctrl.backoff_control(total_load=sum(Lambda), rho=(RHO * 1000 / trao), p_d = ue_list[0].QoS_requirement, p_s=p_s, K=ctrl.sat_num, Z=sat_list[0].Z,backoff_mode=backoff_mode,n=n)
+            ctrl.backoff_control(total_load=sum(Lambda), rho=rho_rao, p_d = ue_list[0].QoS_requirement, p_s=p_s, K=ctrl.sat_num, Z=sat_list[0].Z,backoff_mode=backoff_mode,n=n)
             current_n_hat = ctrl.N_estimate
         n_history.append(current_n_hat)
         

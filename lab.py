@@ -8,11 +8,11 @@ epsilon_sweep = False
 
 if RUN_RHO_SWEEP:
     NUM_UE = 10000
-    SECONDS = 100
+    SECONDS = 10
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = np.array([0.005, 0.01, 0.015, 0.02, 0.025])
+    RHO_VALUES = -np.log(1 - np.array([0.05, 0.10, 0.15, 0.20, 0.25])) / 0.1
     MODES = [
         ([1, 1], "Proposed"),
         ([1, 2], "Dynamic ACB"),
@@ -24,7 +24,7 @@ if RUN_RHO_SWEEP:
     rho_results = {label: [] for _, label in MODES}
     for mode, label in MODES:
         for rho in RHO_VALUES:
-            print(f"\nRunning PLR rho sweep: {label}, rho={rho}")
+            print(f"\nRunning PLR lambda sweep: {label}, lambda={rho}")
             avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
                 rho,
                 SECONDS,
@@ -48,8 +48,8 @@ if RUN_RHO_SWEEP:
         rho_axis = np.array([item["rho"] for item in rho_results[label]])
         plr_values = np.array([item["plr"] for item in rho_results[label]])
         plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=label)
-    plt.title(r"PLR Comparison under Different $\rho$")
-    plt.xlabel(r"Arrival probability $\rho$")
+    plt.title(r"PLR Comparison under Different $\lambda$")
+    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
     plt.ylabel("Packet Loss Rate")
     plt.grid(True, alpha=0.3)
     plt.legend()
@@ -61,8 +61,8 @@ if RUN_RHO_SWEEP:
         rho_axis = np.array([item["rho"] for item in rho_results[label]])
         throughput_values = np.array([item["throughput"] for item in rho_results[label]])
         plt.plot(rho_axis, throughput_values, marker="o", linewidth=1.6, label=label)
-    plt.title(r"Throughput Comparison under Different $\rho$")
-    plt.xlabel(r"Arrival probability $\rho$")
+    plt.title(r"Throughput Comparison under Different $\lambda$")
+    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
     plt.ylabel("Average Throughput (packets/second)")
     plt.grid(True, alpha=0.3)
     plt.legend()
@@ -74,19 +74,19 @@ if RUN_RHO_SWEEP:
         rho_axis = np.array([item["rho"] for item in rho_results[label]])
         delay_values = np.array([item["average_delay_ms"] for item in rho_results[label]])
         plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=label)
-    plt.title(r"AverageDelay Comparison under Different $\rho$")
-    plt.xlabel(r"Arrival probability $\rho$")
+    plt.title(r"AverageDelay Comparison under Different $\lambda$")
+    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
     plt.ylabel("AverageDelay (ms)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
-    print("\n--- Rho Sweep Complete ---")
+    print("\n--- Lambda Sweep Complete ---")
     for _, label in MODES:
         for item in rho_results[label]:
             print(
-                f"{label}, rho={item['rho']:.4f}: "
+                f"{label}, lambda={item['rho']:.4f}: "
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
                 f"avg_delay_ms={item['average_delay_ms']:.2f}, "
@@ -97,7 +97,7 @@ if RUN_RHO_SWEEP:
 if epsilon_sweep:
     # Epsilon sweep for convex group satellite selection.
     EPSILON_VALUES = [0.0, 1e-4, 1e-3, 1e-2, 1e-1]
-    EPSILON_RHO = 0.01
+    EPSILON_RHO = -np.log(1 - 0.10) / 0.1
     EPSILON_SECONDS = 100
     EPSILON_NUM_UE = 10000
     EPSILON_MODE = [1, 1]
@@ -178,12 +178,12 @@ if epsilon_sweep:
 
 # Current single-run experiment.
 num = 10000
-m = [1, 1]
+m = [1, 1] #Satellite selection mode and backoff control mode. 
 USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(0.01, 2, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(-np.log(1 - 0.10) / 0.1, 100, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
 load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {
