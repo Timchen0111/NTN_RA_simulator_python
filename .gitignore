@@ -2,3 +2,5 @@
 !*/
 !*.py
 !.gitignore
+!*.md
+!requirements.txt

@@ -3,7 +3,7 @@ import numpy as np
 
 import main
 
-RUN_RHO_SWEEP = True
+RUN_RHO_SWEEP = False
 epsilon_sweep = False
 
 if RUN_RHO_SWEEP:
@@ -12,7 +12,7 @@ if RUN_RHO_SWEEP:
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = -np.log(1 - np.array([0.05, 0.10, 0.15, 0.20, 0.25])) / 0.1
+    RHO_VALUES = np.array([0.5, 1.0, 1.5, 2.0, 2.5])
     MODES = [
         ([1, 1], "Proposed"),
         ([1, 2], "Dynamic ACB"),
@@ -97,7 +97,7 @@ if RUN_RHO_SWEEP:
 if epsilon_sweep:
     # Epsilon sweep for convex group satellite selection.
     EPSILON_VALUES = [0.0, 1e-4, 1e-3, 1e-2, 1e-1]
-    EPSILON_RHO = -np.log(1 - 0.10) / 0.1
+    EPSILON_RHO = 1.0
     EPSILON_SECONDS = 100
     EPSILON_NUM_UE = 10000
     EPSILON_MODE = [1, 1]
@@ -183,7 +183,7 @@ USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(-np.log(1 - 0.10) / 0.1, 100, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(0.5, 100, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
 load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {
