@@ -3,5 +3,4 @@ scipy
 matplotlib
 skyfield
 cvxpy
-torch
 h5py

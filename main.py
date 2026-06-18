@@ -176,6 +176,7 @@ class UE:
         self.visible_satellites = []
         self.all_satellites = []
         self.A_g = None
+        self.selection_mode = None
         self.fixed_channel_success_prob = None
         self.acb_selection_count = 0
         self.acb_policy_fallback_count = 0
@@ -271,9 +272,19 @@ class UE:
 
         if r < self.p_b[remaining_budget - 1]:
             backoff = True
-        candidate_satellites = self.all_satellites if len(self.all_satellites) > 0 else self.visible_satellites
+        if self.selection_mode == 3:
+            # Mode 3 is a visible-uniform baseline: since it does not optimize by
+            # channel quality, restrict choices to satellites above the same
+            # 10-degree elevation threshold used by preselection.
+            candidate_satellites = self.visible_satellites
+        else:
+            candidate_satellites = self.all_satellites if len(self.all_satellites) > 0 else self.visible_satellites
         if not backoff and len(candidate_satellites) > 0:
             self.acb_selection_count += 1
+            if self.selection_mode == 3:
+                target_sat = np.random.choice(candidate_satellites)
+                self.execute_RA(target_sat)
+                return
             if self.fixed_channel_success_prob is not None:
                 target_sat = np.random.choice(candidate_satellites)
                 self.execute_RA(target_sat)
@@ -440,6 +451,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.angle = np.zeros(0)
             ue.distance = np.zeros(0)
             ue.group = None
+            ue.selection_mode = mode
             ue.fixed_channel_success_prob = None
         return 0
 
@@ -452,8 +464,13 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.angle = np.zeros(sat_count)
             ue.distance = np.zeros(sat_count)
             ue.group = None
+            ue.selection_mode = mode
             ue.fixed_channel_success_prob = 1.0
         return len(ue_list) * sat_count
+
+    # Mode 3 is defined against the preselection visible-random table, which
+    # uses a 10-degree elevation cutoff. Other modes keep their existing cutoff.
+    visibility_min_elevation = 10 if mode == 3 else min_elevation
 
     for sat in sat_snapshot:
         if sat.id < 0 or sat.id >= sat_count:
@@ -483,7 +500,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
         horizontal_distance = np.hypot(east_component, north_component)
         elevation_deg = np.degrees(np.arctan2(up_component, horizontal_distance))
         distance_km = np.linalg.norm(delta, axis=2)
-        visible_mask = elevation_deg > min_elevation
+        visible_mask = elevation_deg > visibility_min_elevation
         sorted_indices = np.argsort(elevation_deg, axis=1)[:, ::-1]
 
         for local_idx, ue in enumerate(chunk):
@@ -491,6 +508,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.all_satellites = list(sat_snapshot)
             ue.angle = elevation_deg[local_idx].copy()
             ue.distance = distance_km[local_idx].copy()
+            ue.selection_mode = mode
             ue.fixed_channel_success_prob = None
             visible_indices = np.flatnonzero(visible_mask[local_idx])
             ue.visible_satellites = [sat_snapshot[i] for i in visible_indices]
@@ -584,6 +602,13 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
     )
     group_weight_table = data["group_weight_table"]
     group_ps_table = data["group_ps_table"]
+    # Only selection mode 3 consumes this table; keep other modes compatible
+    # with older preselection files that may not contain the baseline column.
+    mode3_visible_random_ps_table = (
+        data["mode3_visible_random_ps_table"]
+        if "mode3_visible_random_ps_table" in data.files
+        else None
+    )
     if scenario_metadata is not None:
         required_keys = ["scenario_start_dt_iso", "tle_file_sha256"]
         for key in required_keys:
@@ -614,7 +639,9 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
     print(f"Loaded {len(group_weight_table)} RAOs")
     print(f"Group weight table shape: {group_weight_table.shape}")
     print(f"Group ps table shape: {group_ps_table.shape}")
-    return group_weight_table, group_ps_table
+    if mode3_visible_random_ps_table is not None:
+        print(f"Mode 3 visible-uniform ps table shape: {mode3_visible_random_ps_table.shape}")
+    return group_weight_table, group_ps_table, mode3_visible_random_ps_table
 
 def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False):
     # 模式設定
@@ -645,7 +672,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
     #設定controller
     #載入其他預運算資料
     expected_sat_norad_ids = [int(sat.model.satnum) for sat in real_sats]
-    group_weight_table, group_ps_table = load_ps_tables(
+    group_weight_table, group_ps_table, mode3_visible_random_ps_table = load_ps_tables(
         scenario_metadata=scenario_metadata,
         expected_sat_norad_ids=expected_sat_norad_ids,
     )
@@ -757,6 +784,15 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
         # Compute the precomputed p_s from the group selection policy; optionally replace it with lagged real p_s for control.
         if selection_mode == 2:
             precomputed_p_s = 1.0
+        elif selection_mode == 3:
+            # Mode 3 uses the preselection table for uniform random selection
+            # over satellites visible above 10 degrees, matching its UE-side rule.
+            if mode3_visible_random_ps_table is None:
+                raise ValueError(
+                    "selection_mode 3 requires mode3_visible_random_ps_table. "
+                    "Regenerate group_ps_table.npz with satellite_preselection.py."
+                )
+            precomputed_p_s = mode3_visible_random_ps_table[n]
         else:
             precomputed_p_s = calculate_ps(ctrl,n,group_weight_table, group_ps_table)
         p_s = last_real_p_s if (USE_REAL_PS and last_real_p_s is not None) else precomputed_p_s

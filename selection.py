@@ -1,23 +1,38 @@
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 import random
 from collections import deque
 import cvxpy as cp
 
-class SimpleDQN(nn.Module):
-    def __init__(self, state_dim, action_dim):
-        super(SimpleDQN, self).__init__()
-        self.fc1 = nn.Linear(state_dim, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, action_dim)
+def _require_torch():
+    try:
+        import torch
+        import torch.nn as nn
+        import torch.nn.functional as F
+        import torch.optim as optim
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "SatelliteSelectionAgent requires PyTorch. The current convex "
+            "selection path does not use it, so torch is not in requirements.txt."
+        ) from exc
+    return torch, nn, F, optim
 
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        return self.fc3(x)
+
+def _build_simple_dqn(state_dim, action_dim):
+    _, nn, F, _ = _require_torch()
+
+    class SimpleDQN(nn.Module):
+        def __init__(self, state_dim, action_dim):
+            super(SimpleDQN, self).__init__()
+            self.fc1 = nn.Linear(state_dim, 128)
+            self.fc2 = nn.Linear(128, 64)
+            self.fc3 = nn.Linear(64, action_dim)
+
+        def forward(self, x):
+            x = F.relu(self.fc1(x))
+            x = F.relu(self.fc2(x))
+            return self.fc3(x)
+
+    return SimpleDQN(state_dim, action_dim)
 
 class SatelliteSelectionAgent:
     def __init__(self, satellite_list, S_max, mem_length=5):
@@ -32,11 +47,12 @@ class SatelliteSelectionAgent:
         # Action: 調整哪顆星 (sat_num) 以及調整方向 (-1, 0, +1)
         self.action_dim = self.sat_num * 3 
         
-        self.policy_net = SimpleDQN(self.state_dim, self.action_dim)
-        self.target_net = SimpleDQN(self.state_dim, self.action_dim)
+        self.torch, self.nn, self.F, self.optim = _require_torch()
+        self.policy_net = _build_simple_dqn(self.state_dim, self.action_dim)
+        self.target_net = _build_simple_dqn(self.state_dim, self.action_dim)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=1e-3)
+        self.optimizer = self.optim.Adam(self.policy_net.parameters(), lr=1e-3)
         self.memory = deque(maxlen=5000) # 稍微加大 Buffer 應對高噪聲
         self.batch_size = 64 # 加大 Batch 增加訓練穩定性
         
@@ -74,10 +90,10 @@ class SatelliteSelectionAgent:
         if np.random.rand() < epsilon:
             action_idx = np.random.randint(self.action_dim)
         else:
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
-            with torch.no_grad():
+            state_tensor = self.torch.FloatTensor(state).unsqueeze(0)
+            with self.torch.no_grad():
                 q_values = self.policy_net(state_tensor)
-                action_idx = torch.argmax(q_values).item()
+                action_idx = self.torch.argmax(q_values).item()
         
         # TO DO：套用啟發式分數作為初始 S，讓 RL 主要學習微調而非從零開始
         if S_heuristic is not None:
@@ -108,27 +124,27 @@ class SatelliteSelectionAgent:
         batch = random.sample(self.memory, self.batch_size)
         s, a, r, s_next = zip(*batch)
         
-        s_t = torch.FloatTensor(np.array(s))
-        a_t = torch.LongTensor(np.array(a)).view(-1, 1)
-        r_t = torch.FloatTensor(np.array(r)).view(-1, 1)
-        s_next_t = torch.FloatTensor(np.array(s_next))
+        s_t = self.torch.FloatTensor(np.array(s))
+        a_t = self.torch.LongTensor(np.array(a)).view(-1, 1)
+        r_t = self.torch.FloatTensor(np.array(r)).view(-1, 1)
+        s_next_t = self.torch.FloatTensor(np.array(s_next))
         
         # Double DQN 邏輯
         current_q = self.policy_net(s_t).gather(1, a_t)
         
-        with torch.no_grad():
+        with self.torch.no_grad():
             # 由 Policy Net 選出最佳動作的 Index
             next_actions = self.policy_net(s_next_t).argmax(dim=1, keepdim=True)
             # 由 Target Net 評估該動作的價值，減少高估偏誤
             max_next_q = self.target_net(s_next_t).gather(1, next_actions)
             target_q = r_t + 0.99 * max_next_q
             
-        loss = F.mse_loss(current_q, target_q)
+        loss = self.F.mse_loss(current_q, target_q)
         self.optimizer.zero_grad()
         loss.backward()
         
         # 梯度裁剪抗噪
-        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
+        self.torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
         
         self.optimizer.step()
         

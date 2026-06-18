@@ -8,7 +8,7 @@ import main
 # parameters are fixed so the curve isolates epsilon's effect on N estimation.
 EPSILON_VALUES = np.array([0.0, 1e-4, 1e-3, 1e-2, 1e-1])
 RHO = 0.01
-SECONDS = 10
+SECONDS = 180
 NUM_UE = 10000
 MODE = [1, 1]
 SEED = 42

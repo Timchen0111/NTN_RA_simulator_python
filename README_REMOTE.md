@@ -37,8 +37,6 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-For a CPU-only remote machine, the default `torch` package is usually enough. If the remote machine has CUDA and you want GPU-enabled PyTorch, install the CUDA build from the official PyTorch selector before running `pip install -r requirements.txt`.
-
 ## 3. Run a quick smoke test
 
 Use this first because it does not open plotting windows:

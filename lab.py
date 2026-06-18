@@ -183,7 +183,7 @@ USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(0.5, 100, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(0.5, 180, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
 load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {
