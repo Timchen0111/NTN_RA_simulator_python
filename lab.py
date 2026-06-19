@@ -270,7 +270,7 @@ if epsilon_sweep:
 
 # Current single-run experiment.
 num = 10000
-m = [6, 1] #Satellite selection mode and backoff control mode. 
+m = [7, 1] #Satellite selection mode and backoff control mode. 
 USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
@@ -343,8 +343,8 @@ plt.legend()
 plt.show()
 
 
-# Adaptive epsilon over time; only meaningful for satellite selection MODE 6.
-if m[0] == 6:
+# Adaptive epsilon over time; only meaningful for adaptive satellite selection modes.
+if m[0] in (6, 7):
     adaptive_epsilon_history = results[result_key]["RunHistory"].get("adaptive_epsilon_history", [])
     if len(adaptive_epsilon_history) > 0:
         epsilon_time = np.arange(len(adaptive_epsilon_history))
@@ -352,7 +352,7 @@ if m[0] == 6:
 
         plt.figure(figsize=(10, 6))
         plt.plot(epsilon_time, epsilon_values, label="Adaptive epsilon", color="#d35400", linewidth=1.3)
-        plt.title("Adaptive Imbalance Epsilon over Time")
+        plt.title(f"Adaptive Imbalance Epsilon over Time (MODE {m[0]})")
         plt.xlabel("Time Slot (n)")
         plt.ylabel("Imbalance epsilon")
         plt.grid(True, alpha=0.3)
