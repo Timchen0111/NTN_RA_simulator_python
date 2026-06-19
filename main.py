@@ -24,12 +24,31 @@ class controller:
         self.history_reward = []
         self.ue_list = []
         self.selection_solver_failures = 0
-    def set_group_probabilities_for_rao(self, n, use_convex_solver=False, imbalance_epsilon=0.01):
+    def set_group_probabilities_for_rao(self, n, selection_mode, use_convex_solver=False, imbalance_epsilon=0.01):
         if self.group_weight_table is None:
             self.A_by_group = {}
             return
         weights = self.group_weight_table[n]
         ps_by_group = self.group_ps_table[n] if self.group_ps_table is not None else None
+        if selection_mode == 4:
+            # Mode 4 baseline: every group selects its highest-elevation satellite,
+            # which is stored as the first satellite index in the ordered group key.
+            current_probabilities = {}
+            for group in weights.keys():
+                group_key = tuple(group)
+                if self.sat_num <= 0:
+                    raise ValueError("Cannot build A_g before satellites are registered.")
+                top_satellite = int(group_key[0])
+                if top_satellite < 0 or top_satellite >= self.sat_num:
+                    raise ValueError(
+                        f"Mode 4 group {group_key} points to satellite {top_satellite}, "
+                        f"but sat_num is {self.sat_num}."
+                    )
+                a_g = np.zeros(self.sat_num)
+                a_g[top_satellite] = 1.0
+                current_probabilities[group_key] = a_g
+            self.A_by_group = current_probabilities
+            return
         if use_convex_solver and ps_by_group is not None:
             try:
                 self.A_by_group = selection.solve_group_selection_policy(
@@ -778,6 +797,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
         #Controller-side processing
         ctrl.set_group_probabilities_for_rao(
             n,
+            selection_mode=selection_mode,
             use_convex_solver=(selection_mode == 1),
             imbalance_epsilon=IMBALANCE_EPSILON,
         )

@@ -7,19 +7,37 @@ import numpy as np
 import main
 
 
+def format_group_label(group):
+    return str(tuple(int(satellite_id) + 1 for satellite_id in group))
+
+
 def summarize_group_tables(
     filename="group_ps_table.npz",
     preview_count=10,
     segment_size=100,
-    segment_top_k=5,
+    segment_top_k=3,
+    analysis_seconds=180,
 ):
-    group_weight_table, group_ps_table = main.load_ps_tables(filename)
-    output_prefix = Path(filename).stem
+    group_weight_table, group_ps_table, _ = main.load_ps_tables(filename)
+    with np.load(filename, allow_pickle=True) as data:
+        trao_ms = int(data["trao_ms"]) if "trao_ms" in data.files else 100
+
+    # Use the same 3-minute window as the paper simulations.
+    max_rao_count = analysis_seconds * 1000 // trao_ms
+    used_rao_count = min(max_rao_count, len(group_weight_table))
+    group_weight_table = group_weight_table[:used_rao_count]
+    group_ps_table = group_ps_table[:used_rao_count]
+    output_prefix = f"{Path(filename).stem}_first_{analysis_seconds}s"
 
     group_counts = np.array([len(groups) for groups in group_weight_table])
     histogram = Counter(group_counts.tolist())
 
     print("\n--- Group Count Summary ---")
+    first_ps_table = next((table for table in group_ps_table if len(table) > 0), None)
+    satellite_count = len(next(iter(first_ps_table.values()))) if first_ps_table is not None else 0
+    print(f"Satellite count: {satellite_count}")
+    print(f"Analysis window: first {analysis_seconds} seconds")
+    print(f"RAO duration: {trao_ms} ms")
     print(f"RAO count: {len(group_counts)}")
     print(f"Average groups per RAO: {np.mean(group_counts):.4f}")
     print(f"Median groups per RAO: {np.median(group_counts):.4f}")
@@ -29,6 +47,17 @@ def summarize_group_tables(
     print("\n--- Group Count Histogram ---")
     for count in sorted(histogram):
         print(f"{count} groups: {histogram[count]} RAOs")
+
+    # Plot the number of preselection groups that exist in each RAO over time.
+    plt.figure(figsize=(12, 5))
+    plt.plot(range(len(group_counts)), group_counts, linewidth=1.4)
+    plt.title(f"Number of Preselection Groups per RAO")
+    plt.xlabel("RAO Index")
+    plt.ylabel("Group Count")
+    plt.grid(True, linestyle="--", alpha=0.4)
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}_group_count_per_rao.png", dpi=150)
+    plt.show()
 
     print(f"\n--- First {preview_count} RAOs ---")
     for n in range(min(preview_count, len(group_weight_table))):
@@ -42,10 +71,10 @@ def summarize_group_tables(
 
     print(f"\n--- {preview_count} Most Common Groups ---")
     for group, count in most_common_groups:
-        print(f"group {group}: {count} RAOs")
+        print(f"group {format_group_label(group)}: {count} RAOs")
 
     if most_common_groups:
-        labels = [str(group) for group, _ in most_common_groups]
+        labels = [format_group_label(group) for group, _ in most_common_groups]
         counts = [count for _, count in most_common_groups]
 
         plt.figure(figsize=(12, 6))
@@ -55,7 +84,7 @@ def summarize_group_tables(
         plt.ylabel("RAO Count")
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
-        plt.savefig("group_occurrence_histogram.png", dpi=150)
+        plt.savefig(f"{output_prefix}_group_occurrence_histogram.png", dpi=150)
         plt.show()
 
         top_trend_groups = [group for group, _ in most_common_groups[:5]]
@@ -66,15 +95,15 @@ def summarize_group_tables(
                 group_weight_table[n].get(group, 0.0)
                 for n in range(len(group_weight_table))
             ]
-            plt.plot(range(len(weight_trend)), weight_trend, label=str(group))
+            plt.plot(range(len(weight_trend)), weight_trend, label=format_group_label(group))
 
-        plt.title("Weight Trends for Top 5 Most Common Groups")
+        plt.title(f"Weight Trends for Top 5 Most Common Groups")
         plt.xlabel("RAO Index")
         plt.ylabel("w_g")
         plt.grid(True, linestyle="--", alpha=0.4)
         plt.legend()
         plt.tight_layout()
-        plt.savefig("top5_group_weight_trends.png", dpi=150)
+        plt.savefig(f"{output_prefix}_top5_group_weight_trends.png", dpi=150)
         plt.show()
 
     integrated_group_weights = Counter()
@@ -93,11 +122,11 @@ def summarize_group_tables(
 
     print(f"\n--- Top {preview_count} Groups by Time-Averaged w_g ---")
     for group, avg_weight in top_integrated_groups:
-        print(f"group {group}: average w_g = {avg_weight:.6f}")
+        print(f"group {format_group_label(group)}: average w_g = {avg_weight:.6f}")
 
     if top_integrated_groups:
         top_group_set = {group for group, _ in top_integrated_groups}
-        labels = [str(group) for group, _ in top_integrated_groups]
+        labels = [format_group_label(group) for group, _ in top_integrated_groups]
         values = [avg_weight for _, avg_weight in top_integrated_groups]
         other_weight = sum(
             avg_weight
@@ -113,7 +142,7 @@ def summarize_group_tables(
         plt.title(f"Top {preview_count} Groups by Time-Averaged w_g")
         plt.axis("equal")
         plt.tight_layout()
-        plt.savefig("group_time_averaged_weight_ranking.png", dpi=150)
+        plt.savefig(f"{output_prefix}_group_time_averaged_weight_ranking.png", dpi=150)
         plt.show()
 
     segment_records = []
@@ -143,7 +172,7 @@ def summarize_group_tables(
     )
     for start, end, _, top_groups in segment_records:
         top_text = ", ".join(
-            f"{group}: {avg_weight:.4f}"
+            f"{format_group_label(group)}: {avg_weight:.4f}"
             for group, avg_weight in top_groups
         )
         print(f"RAO {start}-{end}: {top_text}")
@@ -156,23 +185,24 @@ def summarize_group_tables(
     if heatmap_groups:
         heatmap = np.array([
             [
-                averaged_weights.get(group, 0.0)
-                for _, _, averaged_weights, _ in segment_records
+                averaged_weights.get(group, np.nan)
+                if group in {top_group for top_group, _ in top_groups}
+                else np.nan
+                for _, _, averaged_weights, top_groups in segment_records
             ]
             for group in heatmap_groups
         ])
         x_labels = [f"{start}-{end}" for start, end, _, _ in segment_records]
-        y_labels = [str(group) for group in heatmap_groups]
+        y_labels = [format_group_label(group) for group in heatmap_groups]
 
         fig_width = max(12, len(x_labels) * 0.7)
         fig_height = max(6, len(y_labels) * 0.35)
         plt.figure(figsize=(fig_width, fig_height))
-        plt.imshow(heatmap, aspect="auto", cmap="viridis")
-        plt.colorbar(label="Average w_g in Segment")
-        plt.title(
-            f"Segment Dominant Groups "
-            f"(Top {segment_top_k} per {segment_size} RAOs)"
-        )
+        cmap = plt.cm.viridis.copy()
+        cmap.set_bad(color="white")
+        plt.imshow(np.ma.masked_invalid(heatmap), aspect="auto", cmap=cmap)
+        plt.colorbar(label="Average group weight in each segment")
+        plt.title("Weight distribution of the dominant groups")
         plt.xlabel("RAO Segment")
         plt.ylabel("Group")
         plt.xticks(range(len(x_labels)), x_labels, rotation=45, ha="right")

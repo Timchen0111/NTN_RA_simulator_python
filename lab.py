@@ -4,6 +4,7 @@ import numpy as np
 import main
 
 RUN_RHO_SWEEP = False
+RUN_SATELLITE_SELECTION_SWEEP = False
 epsilon_sweep = False
 
 if RUN_RHO_SWEEP:
@@ -12,7 +13,7 @@ if RUN_RHO_SWEEP:
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = np.array([0.5, 1.0, 1.5, 2.0, 2.5])
+    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
     MODES = [
         ([1, 1], "Proposed"),
         ([1, 2], "Dynamic ACB"),
@@ -85,6 +86,96 @@ if RUN_RHO_SWEEP:
     print("\n--- Lambda Sweep Complete ---")
     for _, label in MODES:
         for item in rho_results[label]:
+            print(
+                f"{label}, lambda={item['rho']:.4f}: "
+                f"PLR={item['plr']:.4f}, "
+                f"throughput={item['throughput']:.2f}, "
+                f"avg_delay_ms={item['average_delay_ms']:.2f}, "
+                f"final_N={item['final_n_estimate']:.2f}"
+            )
+    raise SystemExit
+
+if RUN_SATELLITE_SELECTION_SWEEP:
+    NUM_UE = 10000
+    SECONDS = 10
+    SEED = 42
+    IMBALANCE_EPSILON = 0.001
+    USE_REAL_PS = False
+    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    EXPERIMENTS = [
+        ([1, 1], "Proposed, epsilon=0.01", 0.01),
+        ([1, 1], "Proposed, epsilon=0.001", 0.001),
+        ([3, 1], "Visible-Uniform", IMBALANCE_EPSILON),
+        ([4, 1], "Highest-Elevation", IMBALANCE_EPSILON),
+    ]
+
+    # Satellite-selection baselines keep the proposed backoff controller fixed
+    # so the PLR curves isolate the satellite selection policy.
+    selection_results = {label: [] for _, label, _ in EXPERIMENTS}
+    for mode, label, epsilon in EXPERIMENTS:
+        for rho in RHO_VALUES:
+            print(f"\nRunning satellite selection lambda sweep: {label}, lambda={rho}")
+            avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
+                rho,
+                SECONDS,
+                NUM_UE,
+                mode,
+                SEED,
+                epsilon,
+                USE_REAL_PS=USE_REAL_PS,
+            )
+            final_n_estimate = n_history[-1] if len(n_history) > 0 else np.nan
+            selection_results[label].append({
+                "rho": rho,
+                "epsilon": epsilon,
+                "plr": plr,
+                "throughput": avg_throughput,
+                "average_delay_ms": run_history.get("average_delay_ms", np.nan),
+                "final_n_estimate": final_n_estimate,
+            })
+
+    plt.figure(figsize=(10, 6))
+    for _, label, _ in EXPERIMENTS:
+        rho_axis = np.array([item["rho"] for item in selection_results[label]])
+        plr_values = np.array([item["plr"] for item in selection_results[label]])
+        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=label)
+    plt.title(r"Satellite Selection PLR Comparison under Different $\lambda$")
+    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
+    plt.ylabel("Packet Loss Rate")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(10, 6))
+    for _, label, _ in EXPERIMENTS:
+        rho_axis = np.array([item["rho"] for item in selection_results[label]])
+        throughput_values = np.array([item["throughput"] for item in selection_results[label]])
+        plt.plot(rho_axis, throughput_values, marker="o", linewidth=1.6, label=label)
+    plt.title(r"Satellite Selection Throughput Comparison under Different $\lambda$")
+    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
+    plt.ylabel("Average Throughput (packets/second)")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(10, 6))
+    for _, label, _ in EXPERIMENTS:
+        rho_axis = np.array([item["rho"] for item in selection_results[label]])
+        delay_values = np.array([item["average_delay_ms"] for item in selection_results[label]])
+        plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=label)
+    plt.title(r"Satellite Selection AverageDelay Comparison under Different $\lambda$")
+    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
+    plt.ylabel("AverageDelay (ms)")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- Satellite Selection Lambda Sweep Complete ---")
+    for _, label, _ in EXPERIMENTS:
+        for item in selection_results[label]:
             print(
                 f"{label}, lambda={item['rho']:.4f}: "
                 f"PLR={item['plr']:.4f}, "
@@ -183,7 +274,7 @@ USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(0.5, 180, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(1, 180, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
 load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {
@@ -298,16 +389,18 @@ else:
 
 # Precomputed p_s error over time.
 ps_history = results[result_key]["RunHistory"].get("ps_history", [])
+ps_mae = np.nan
 if len(ps_history) > 0:
     ps_time = np.array([item["time_slot"] for item in ps_history])
     ps_error = np.array([item["error"] for item in ps_history])
+    ps_mae = np.mean(np.abs(ps_error))
     real_ps = np.array([item["real"] for item in ps_history])
     precomputed_ps = np.array([item["precomputed"] for item in ps_history])
 
     plt.figure(figsize=(10, 6))
     plt.axhline(y=0.0, color="black", linestyle="--", linewidth=1.0, alpha=0.6)
-    plt.plot(ps_time, ps_error, label=r"Error: real $p_s$ - precomputed $p_s$", color="red", linewidth=1.3)
-    plt.title(r"Precomputed $p_s$ Error Over Time")
+    plt.plot(ps_time, ps_error, label=r"Error: real $p_s$ - estimated $p_s$", color="red", linewidth=1.3)
+    plt.title(r"$p_s$ Error Over Time")
     plt.xlabel("Time Slot (n)")
     plt.ylabel(r"$p_s$ Error")
     plt.grid(True, alpha=0.3)
@@ -332,3 +425,4 @@ print("--- Test Complete ---")
 print(f"Packet Loss Rate: {results[result_key]['SuccessRate']:.4f}")
 print(f"Average Throughput: {single_throughput:.2f}")
 print(f"AverageDelay (ms): {single_delay_ms:.2f}")
+print(f"p_s MAE: {ps_mae:.6f}" if np.isfinite(ps_mae) else "p_s MAE: N/A")
