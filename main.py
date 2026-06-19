@@ -28,13 +28,6 @@ class controller:
         self.load_aware_eta = 1.0
         self.adaptive_epsilon_load_ema = 0.0
         self.adaptive_epsilon_history = []
-        self.last_observed_success_preambles = 0.0
-        self.last_observed_collision_preambles = 0.0
-        self.collision_adaptive_epsilon = None
-        self.collision_adaptive_previous_ratio = None
-        self.collision_adaptive_window_success = 0.0
-        self.collision_adaptive_window_collision = 0.0
-        self.collision_adaptive_window_count = 0
     def set_group_probabilities_for_rao(self, n, selection_mode, use_convex_solver=False, imbalance_epsilon=0.01, preamble_count=None):
         if self.group_weight_table is None:
             self.A_by_group = {}
@@ -148,8 +141,6 @@ class controller:
         actual_lambda = np.zeros(self.sat_num) #用來記錄每顆衛星的真實附載，供測試參考
         for i, sat in enumerate(self.satellites):
             N_i[i], N_s[i], N_c[i], actual_lambda[i] = sat.report()
-        self.last_observed_success_preambles = float(np.sum(N_s))
-        self.last_observed_collision_preambles = float(np.sum(N_c))
         #實作MoM estimator
         Lambda = Load_estimator.load_estimator(N_i, N_s, N_c, tables=expected_tables) #傳入預計算好的期望值表
         #Lambda = actual_lambda #測試用
@@ -204,48 +195,7 @@ class controller:
             "epsilon": epsilon,
         })
         return epsilon
-
-    def collision_ratio_imbalance_epsilon(self, success_count, collision_count, epsilon_initial, epsilon_min, epsilon_max, update_interval, gamma, delta_c):
-        # Mode 7: adjust epsilon only when the observed collision ratio changes
-        # meaningfully over an update window, avoiding a continuously tuned load map.
-        if self.collision_adaptive_epsilon is None:
-            self.collision_adaptive_epsilon = float(np.clip(epsilon_initial, epsilon_min, epsilon_max))
-        update_interval = max(1, int(update_interval))
-        gamma = max(float(gamma), 1.0)
-        delta_c = max(float(delta_c), 0.0)
-        if success_count is not None and collision_count is not None:
-            self.collision_adaptive_window_success += max(float(success_count), 0.0)
-            self.collision_adaptive_window_collision += max(float(collision_count), 0.0)
-            self.collision_adaptive_window_count += 1
-
-        collision_ratio = self.collision_adaptive_previous_ratio
-        updated = False
-        if self.collision_adaptive_window_count >= update_interval:
-            denominator = (
-                self.collision_adaptive_window_success
-                + self.collision_adaptive_window_collision
-                + 1e-12
-            )
-            collision_ratio = self.collision_adaptive_window_collision / denominator
-            previous_ratio = self.collision_adaptive_previous_ratio
-            if previous_ratio is not None:
-                if collision_ratio > previous_ratio + delta_c:
-                    self.collision_adaptive_epsilon = max(epsilon_min, self.collision_adaptive_epsilon / gamma)
-                elif collision_ratio < previous_ratio - delta_c:
-                    self.collision_adaptive_epsilon = min(epsilon_max, self.collision_adaptive_epsilon * gamma)
-            self.collision_adaptive_previous_ratio = collision_ratio
-            self.collision_adaptive_window_success = 0.0
-            self.collision_adaptive_window_collision = 0.0
-            self.collision_adaptive_window_count = 0
-            updated = True
-
-        self.adaptive_epsilon_history.append({
-            "collision_ratio": collision_ratio,
-            "epsilon": self.collision_adaptive_epsilon,
-            "updated": updated,
-        })
-        return self.collision_adaptive_epsilon
-    
+     
 class satellite:
     def __init__(self, id, skyfield_sat, Z=54):
         self.id = id
@@ -786,7 +736,7 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
         print(f"Mode 3 visible-uniform ps table shape: {mode3_visible_random_ps_table.shape}")
     return group_weight_table, group_ps_table, mode3_visible_random_ps_table
 
-def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=1.0, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=1.0, ADAPTIVE_EPSILON_BETA=0.2, COLLISION_EPSILON_UPDATE_INTERVAL=10, COLLISION_EPSILON_GAMMA=2.0, COLLISION_EPSILON_DELTA_C=0.02):
+def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=1.0, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=1.0, ADAPTIVE_EPSILON_BETA=0.2):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
     if MODE == 0:
@@ -801,7 +751,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         print("Mode 0: visibility heterogeneity test")
     else:
         print(f"Selection mode: {selection_mode}, Backoff mode: {backoff_mode}")
-    if selection_mode in (6, 7):
+    if selection_mode == 6:
         print("Satellite selection imbalance epsilon: adaptive")
     else:
         print(f"Satellite selection imbalance epsilon: {IMBALANCE_EPSILON}")
@@ -812,13 +762,6 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
             "Adaptive epsilon: "
             f"min={ADAPTIVE_EPSILON_MIN}, max={ADAPTIVE_EPSILON_MAX}, "
             f"alpha={ADAPTIVE_EPSILON_ALPHA}, beta={ADAPTIVE_EPSILON_BETA}"
-        )
-    elif selection_mode == 7:
-        print(
-            "Collision-ratio adaptive epsilon: "
-            f"initial={IMBALANCE_EPSILON}, min={ADAPTIVE_EPSILON_MIN}, max={ADAPTIVE_EPSILON_MAX}, "
-            f"W={COLLISION_EPSILON_UPDATE_INTERVAL}, gamma={COLLISION_EPSILON_GAMMA}, "
-            f"Delta_c={COLLISION_EPSILON_DELTA_C}"
         )
     
     # 設定觀察點 (台北)
@@ -959,26 +902,11 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
             )
             if n % 50 == 0:
                 print(f"Adaptive epsilon at RAO {n}: {effective_imbalance_epsilon:.6f}")
-        elif selection_mode == 7:
-            # Mode 7 keeps the proposed convex selection, but changes epsilon
-            # only when the previous-window collision ratio moves beyond Delta_c.
-            effective_imbalance_epsilon = ctrl.collision_ratio_imbalance_epsilon(
-                success_count=ctrl.last_observed_success_preambles if n > 0 else None,
-                collision_count=ctrl.last_observed_collision_preambles if n > 0 else None,
-                epsilon_initial=IMBALANCE_EPSILON,
-                epsilon_min=ADAPTIVE_EPSILON_MIN,
-                epsilon_max=ADAPTIVE_EPSILON_MAX,
-                update_interval=COLLISION_EPSILON_UPDATE_INTERVAL,
-                gamma=COLLISION_EPSILON_GAMMA,
-                delta_c=COLLISION_EPSILON_DELTA_C,
-            )
-            if n % 50 == 0:
-                print(f"Adaptive epsilon at RAO {n}: {effective_imbalance_epsilon:.6f}")
         #Controller-side processing
         ctrl.set_group_probabilities_for_rao(
             n,
             selection_mode=selection_mode,
-            use_convex_solver=(selection_mode in (1, 6, 7)),
+            use_convex_solver=(selection_mode in (1, 6)),
             imbalance_epsilon=effective_imbalance_epsilon,
             preamble_count=sat_list[0].Z,
         )

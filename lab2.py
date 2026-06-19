@@ -4,7 +4,6 @@ import numpy as np
 import main
 
 
-RUN_MODE6_MODE7_RHO_SWEEP = True
 RUN_MODE5_ETA_SWEEP = False
 RUN_EPSILON_N_ESTIMATION_SWEEP = False
 
@@ -13,75 +12,6 @@ SECONDS = 20
 SEED = 42
 USE_REAL_PS = False
 IMBALANCE_EPSILON = 0.01
-ADAPTIVE_EPSILON_MIN = 1e-4
-ADAPTIVE_EPSILON_MAX = 1e-2
-ADAPTIVE_EPSILON_ALPHA = 1.0
-ADAPTIVE_EPSILON_BETA = 0.2
-COLLISION_EPSILON_UPDATE_INTERVAL = 10
-COLLISION_EPSILON_GAMMA = 1.5
-COLLISION_EPSILON_DELTA_C = 0.02
-
-
-if RUN_MODE6_MODE7_RHO_SWEEP:
-    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
-    EXPERIMENTS = [
-        ([6, 1], "MODE6 Load-EMA Adaptive"),
-        ([7, 1], "MODE7 Collision-Ratio Adaptive"),
-    ]
-
-    rho_results = {label: [] for _, label in EXPERIMENTS}
-    for mode, label in EXPERIMENTS:
-        for rho in RHO_VALUES:
-            print(f"\nRunning MODE6/MODE7 rho sweep: {label}, rho={rho}")
-            avg_throughput, plr, n_history, actual_pi, observe_pi, reward_history, run_history = main.main(
-                rho,
-                SECONDS,
-                NUM_UE,
-                mode,
-                SEED,
-                IMBALANCE_EPSILON=IMBALANCE_EPSILON,
-                USE_REAL_PS=USE_REAL_PS,
-                ADAPTIVE_EPSILON_MIN=ADAPTIVE_EPSILON_MIN,
-                ADAPTIVE_EPSILON_MAX=ADAPTIVE_EPSILON_MAX,
-                ADAPTIVE_EPSILON_ALPHA=ADAPTIVE_EPSILON_ALPHA,
-                ADAPTIVE_EPSILON_BETA=ADAPTIVE_EPSILON_BETA,
-                COLLISION_EPSILON_UPDATE_INTERVAL=COLLISION_EPSILON_UPDATE_INTERVAL,
-                COLLISION_EPSILON_GAMMA=COLLISION_EPSILON_GAMMA,
-                COLLISION_EPSILON_DELTA_C=COLLISION_EPSILON_DELTA_C,
-            )
-            epsilon_history = run_history.get("adaptive_epsilon_history", [])
-            final_epsilon = epsilon_history[-1]["epsilon"] if len(epsilon_history) > 0 else np.nan
-            rho_results[label].append({
-                "rho": rho,
-                "plr": plr,
-                "throughput": avg_throughput,
-                "average_delay_ms": run_history.get("average_delay_ms", np.nan),
-                "final_epsilon": final_epsilon,
-            })
-
-    plt.figure(figsize=(10, 6))
-    for _, label in EXPERIMENTS:
-        rho_axis = np.array([item["rho"] for item in rho_results[label]])
-        plr_values = np.array([item["plr"] for item in rho_results[label]])
-        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=label)
-    plt.title(r"MODE6 vs MODE7 PLR under Different $\rho$")
-    plt.xlabel(r"Arrival rate $\rho$ (packets/s)")
-    plt.ylabel("Packet Loss Rate")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-    print("\n--- MODE6/MODE7 Rho Sweep Complete ---")
-    for _, label in EXPERIMENTS:
-        for item in rho_results[label]:
-            print(
-                f"{label}, rho={item['rho']:.4f}: "
-                f"PLR={item['plr']:.4f}, "
-                f"throughput={item['throughput']:.2f}, "
-                f"avg_delay_ms={item['average_delay_ms']:.2f}, "
-                f"final_epsilon={item['final_epsilon']:.6g}"
-            )
 
 
 if RUN_MODE5_ETA_SWEEP:
