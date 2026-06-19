@@ -4,7 +4,7 @@ import numpy as np
 import main
 
 RUN_RHO_SWEEP = False
-RUN_SATELLITE_SELECTION_SWEEP = True
+RUN_SATELLITE_SELECTION_SWEEP = False
 epsilon_sweep = False
 
 if RUN_RHO_SWEEP:
@@ -108,7 +108,6 @@ if RUN_SATELLITE_SELECTION_SWEEP:
         #([3, 1], "Visible-Uniform", IMBALANCE_EPSILON),
         #([4, 1], "Highest-Elevation", IMBALANCE_EPSILON),
         ([5, 1], "Load-Link-Aware", IMBALANCE_EPSILON),
-        ([6, 1], "UE Load-Link-Aware", IMBALANCE_EPSILON),
     ]
 
     # Satellite-selection baselines keep the proposed backoff controller fixed
@@ -271,12 +270,12 @@ if epsilon_sweep:
 
 # Current single-run experiment.
 num = 10000
-m = [5, 1] #Satellite selection mode and backoff control mode. 
+m = [1, 1] #Satellite selection mode and backoff control mode. 
 USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(1, 180, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(1, 180, num, m, 42, 0.001, USE_REAL_PS=USE_REAL_PS)
 load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {

@@ -5,7 +5,6 @@ import orbit
 from datetime import datetime, timezone, timedelta  # 必須有 timedelta
 import Load_estimator, backoff_control, N_estimate, selection
 import json
-from channel_model import estimate_channel_success_probability
 from scenario_time import get_tle_scenario_metadata, load_starlink_tles
 
 class controller:
@@ -249,9 +248,6 @@ class UE:
         self.all_satellites = []
         self.A_g = None
         self.selection_mode = None
-        self.load_indicator = None
-        self.load_aware_eta = 1.0
-        self.load_preamble_count = 1.0
         self.fixed_channel_success_prob = None
         self.acb_selection_count = 0
         self.acb_policy_fallback_count = 0
@@ -322,13 +318,6 @@ class UE:
         #取得系統資訊，包含backoff機率和衛星選擇資訊
         #print(f"UE {self.id}, group {self.group}")
         self.p_b = ctrl.p_b
-        self.load_indicator = ctrl.last_load_indicator
-        self.load_aware_eta = ctrl.load_aware_eta
-        self.load_preamble_count = ctrl.satellites[0].Z if len(ctrl.satellites) > 0 else 1.0
-        if self.selection_mode == 6:
-            # Mode 6 selects satellites per UE, so it does not consume group A_g.
-            self.A_g = None
-            return
         if self.group is None:
             self.A_g = None
             return
@@ -354,10 +343,9 @@ class UE:
 
         if r < self.p_b[remaining_budget - 1]:
             backoff = True
-        if self.selection_mode in (3, 6):
-            # Modes 3 and 6 only select from the UE-visible set. Mode 3's
-            # visibility threshold is set in update_visibility_batch; Mode 6
-            # keeps the normal visibility threshold and ranks links per UE.
+        if self.selection_mode == 3:
+            # Mode 3 only selects from the UE-visible set; its visibility
+            # threshold is set in update_visibility_batch.
             candidate_satellites = self.visible_satellites
         else:
             candidate_satellites = self.all_satellites if len(self.all_satellites) > 0 else self.visible_satellites
@@ -365,35 +353,6 @@ class UE:
             self.acb_selection_count += 1
             if self.selection_mode == 3:
                 target_sat = np.random.choice(candidate_satellites)
-                self.execute_RA(target_sat)
-                return
-            if self.selection_mode == 6:
-                # Mode 6 baseline: per-UE load-and-link-aware selection.
-                # Each UE estimates its own link success probability from the
-                # current angle/distance and combines it with the broadcast load.
-                load_indicator = (
-                    np.zeros(len(self.angle))
-                    if self.load_indicator is None
-                    else np.asarray(self.load_indicator, dtype=float)
-                )
-                load_scale = max(float(self.load_preamble_count), 1.0)
-                utilities = []
-                for sat in candidate_satellites:
-                    link_prob = estimate_channel_success_probability(
-                        self.angle[sat.id],
-                        self.distance[sat.id],
-                    )
-                    load_value = load_indicator[sat.id] if sat.id < len(load_indicator) else 0.0
-                    normalized_load = max(load_value, 0.0) / load_scale
-                    utilities.append(link_prob * np.exp(-self.load_aware_eta * normalized_load))
-                utilities = np.asarray(utilities, dtype=float)
-                utility_sum = np.sum(utilities)
-                if utility_sum > 0 and np.isfinite(utility_sum):
-                    probabilities = utilities / utility_sum
-                    chosen_idx = np.random.choice(len(candidate_satellites), p=probabilities)
-                    target_sat = candidate_satellites[chosen_idx]
-                else:
-                    target_sat = max(candidate_satellites, key=lambda sat: self.angle[sat.id])
                 self.execute_RA(target_sat)
                 return
             if self.fixed_channel_success_prob is not None:
@@ -754,7 +713,7 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
         print(f"Mode 3 visible-uniform ps table shape: {mode3_visible_random_ps_table.shape}")
     return group_weight_table, group_ps_table, mode3_visible_random_ps_table
 
-def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False):
+def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=1.0):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
     if MODE == 0:
@@ -771,6 +730,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
         print(f"Selection mode: {selection_mode}, Backoff mode: {backoff_mode}")
     print(f"Satellite selection imbalance epsilon: {IMBALANCE_EPSILON}")
     print(f"Use lagged real p_s: {USE_REAL_PS}")
+    print(f"Load-aware eta: {LOAD_AWARE_ETA}")
     
     # 設定觀察點 (台北)
     geo = wgs84.latlon(25.03, 121.56)
@@ -788,6 +748,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
         expected_sat_norad_ids=expected_sat_norad_ids,
     )
     ctrl = controller(group_weight_table=group_weight_table, group_ps_table=group_ps_table)
+    ctrl.load_aware_eta = LOAD_AWARE_ETA
     # 將真實衛星「封裝」進您的 Simulation Class
     sat_list = []
     for i, real_sat in enumerate(real_sats):
@@ -913,17 +874,11 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
                 raise ValueError(
                     "selection_mode 3 requires mode3_visible_random_ps_table. "
                     "Regenerate group_ps_table.npz with satellite_preselection.py."
-                )
+            )
             precomputed_p_s = mode3_visible_random_ps_table[n]
-        elif selection_mode == 6:
-            # Mode 6 is per-UE and has no group-level precomputed p_s, so the
-            # controller uses the latest measured real p_s as a lagged estimate.
-            precomputed_p_s = last_real_p_s if last_real_p_s is not None else 1.0
         else:
             precomputed_p_s = calculate_ps(ctrl,n,group_weight_table, group_ps_table)
-        p_s = precomputed_p_s if selection_mode == 6 else (
-            last_real_p_s if (USE_REAL_PS and last_real_p_s is not None) else precomputed_p_s
-        )
+        p_s = last_real_p_s if (USE_REAL_PS and last_real_p_s is not None) else precomputed_p_s
         #print(f"Precomputed p_s for RAO {n}: {p_s:.4f}")
         if n > 0:
             ctrl.satellite_selection(Lambda=Lambda,MODE=selection_mode, n=n, target_location=geo, t=current_t)
