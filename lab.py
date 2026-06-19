@@ -270,12 +270,12 @@ if epsilon_sweep:
 
 # Current single-run experiment.
 num = 10000
-m = [1, 1] #Satellite selection mode and backoff control mode. 
+m = [6, 1] #Satellite selection mode and backoff control mode. 
 USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(1, 180, num, m, 42, 0.001, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(1, 100, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
 load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {
@@ -341,6 +341,26 @@ plt.ylabel("Load Variance Across Satellites")
 plt.grid(True, alpha=0.3)
 plt.legend()
 plt.show()
+
+
+# Adaptive epsilon over time; only meaningful for satellite selection MODE 6.
+if m[0] == 6:
+    adaptive_epsilon_history = results[result_key]["RunHistory"].get("adaptive_epsilon_history", [])
+    if len(adaptive_epsilon_history) > 0:
+        epsilon_time = np.arange(len(adaptive_epsilon_history))
+        epsilon_values = np.array([item["epsilon"] for item in adaptive_epsilon_history], dtype=float)
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(epsilon_time, epsilon_values, label="Adaptive epsilon", color="#d35400", linewidth=1.3)
+        plt.title("Adaptive Imbalance Epsilon over Time")
+        plt.xlabel("Time Slot (n)")
+        plt.ylabel("Imbalance epsilon")
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("No adaptive epsilon history was recorded; skip epsilon plot.")
 
 
 # State distribution over time for all pi_n states.

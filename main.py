@@ -26,6 +26,8 @@ class controller:
         self.selection_solver_failures = 0
         self.last_load_indicator = None
         self.load_aware_eta = 1.0
+        self.adaptive_epsilon_load_ema = 0.0
+        self.adaptive_epsilon_history = []
     def set_group_probabilities_for_rao(self, n, selection_mode, use_convex_solver=False, imbalance_epsilon=0.01, preamble_count=None):
         if self.group_weight_table is None:
             self.A_by_group = {}
@@ -113,10 +115,10 @@ class controller:
                 return
             except Exception as exc:
                 self.selection_solver_failures += 1
-                print(
-                    f"Warning: convex satellite selection failed at RAO {n}; "
-                    f"falling back to uniform A_g. Reason: {exc}"
-                )
+                #print(
+                 #   f"Warning: convex satellite selection failed at RAO {n}; "
+                  #  f"falling back to uniform A_g. Reason: {exc}"
+                #)
 
         current_probabilities = {}
         for group in weights.keys():
@@ -172,6 +174,27 @@ class controller:
     def reset_agent(self):
         self.last_state = None
         self.last_action_idx = None
+
+    def adaptive_imbalance_epsilon(self, total_load, total_preambles, epsilon_min, epsilon_max, alpha, beta):
+        # Mode 6: adapt the convex load-balance tolerance from a smoothed
+        # normalized load. Higher load gives a smaller, more conservative epsilon.
+        if total_preambles <= 0:
+            raise ValueError("total_preambles must be positive for adaptive epsilon.")
+        beta = np.clip(beta, 0.0, 1.0)
+        total_load = max(float(total_load), 0.0)
+        self.adaptive_epsilon_load_ema = (
+            (1.0 - beta) * self.adaptive_epsilon_load_ema
+            + beta * total_load
+        )
+        normalized_load = self.adaptive_epsilon_load_ema / float(total_preambles)
+        epsilon = epsilon_min + (epsilon_max - epsilon_min) * np.exp(-alpha * normalized_load)
+        epsilon = float(np.clip(epsilon, epsilon_min, epsilon_max))
+        self.adaptive_epsilon_history.append({
+            "load_ema": self.adaptive_epsilon_load_ema,
+            "normalized_load": normalized_load,
+            "epsilon": epsilon,
+        })
+        return epsilon
     
 class satellite:
     def __init__(self, id, skyfield_sat, Z=54):
@@ -713,7 +736,7 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
         print(f"Mode 3 visible-uniform ps table shape: {mode3_visible_random_ps_table.shape}")
     return group_weight_table, group_ps_table, mode3_visible_random_ps_table
 
-def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=1.0):
+def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=1.0, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=1.0, ADAPTIVE_EPSILON_BETA=0.2):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
     if MODE == 0:
@@ -728,9 +751,18 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
         print("Mode 0: visibility heterogeneity test")
     else:
         print(f"Selection mode: {selection_mode}, Backoff mode: {backoff_mode}")
-    print(f"Satellite selection imbalance epsilon: {IMBALANCE_EPSILON}")
+    if selection_mode == 6:
+        print("Satellite selection imbalance epsilon: adaptive")
+    else:
+        print(f"Satellite selection imbalance epsilon: {IMBALANCE_EPSILON}")
     print(f"Use lagged real p_s: {USE_REAL_PS}")
     print(f"Load-aware eta: {LOAD_AWARE_ETA}")
+    if selection_mode == 6:
+        print(
+            "Adaptive epsilon: "
+            f"min={ADAPTIVE_EPSILON_MIN}, max={ADAPTIVE_EPSILON_MAX}, "
+            f"alpha={ADAPTIVE_EPSILON_ALPHA}, beta={ADAPTIVE_EPSILON_BETA}"
+        )
     
     # 設定觀察點 (台北)
     geo = wgs84.latlon(25.03, 121.56)
@@ -856,12 +888,26 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
         # Mode 5 uses the latest available previous-RAO load report before
         # making the current RAO's satellite selection decision.
         ctrl.last_load_indicator = Lambda.copy()
+        effective_imbalance_epsilon = IMBALANCE_EPSILON
+        if selection_mode == 6:
+            # Mode 6 keeps the proposed convex selection, but tightens epsilon
+            # when the EMA-smoothed normalized load becomes high.
+            effective_imbalance_epsilon = ctrl.adaptive_imbalance_epsilon(
+                total_load=sum(Lambda),
+                total_preambles=ctrl.sat_num * sat_list[0].Z,
+                epsilon_min=ADAPTIVE_EPSILON_MIN,
+                epsilon_max=ADAPTIVE_EPSILON_MAX,
+                alpha=ADAPTIVE_EPSILON_ALPHA,
+                beta=ADAPTIVE_EPSILON_BETA,
+            )
+            if n % 50 == 0:
+                print(f"Adaptive epsilon at RAO {n}: {effective_imbalance_epsilon:.6f}")
         #Controller-side processing
         ctrl.set_group_probabilities_for_rao(
             n,
             selection_mode=selection_mode,
-            use_convex_solver=(selection_mode == 1),
-            imbalance_epsilon=IMBALANCE_EPSILON,
+            use_convex_solver=(selection_mode in (1, 6)),
+            imbalance_epsilon=effective_imbalance_epsilon,
             preamble_count=sat_list[0].Z,
         )
         # Compute the precomputed p_s from the group selection policy; optionally replace it with lagged real p_s for control.
@@ -983,6 +1029,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
         "average_delay_raos": np.mean(success_delay_raos) if len(success_delay_raos) > 0 else np.nan,
         "reward": np.mean(ctrl.history_reward),
         "ps_history": ps_history,
+        "adaptive_epsilon_history": ctrl.adaptive_epsilon_history,
     }
     return avg_throughput, plr, n_history, ctrl.actual, ctrl.observe_pi, ctrl.history_reward, run_history
 
