@@ -4,7 +4,7 @@ import numpy as np
 import main
 
 RUN_RHO_SWEEP = False
-RUN_SATELLITE_SELECTION_SWEEP = False
+RUN_SATELLITE_SELECTION_SWEEP = True
 epsilon_sweep = False
 
 if RUN_RHO_SWEEP:
@@ -103,11 +103,12 @@ if RUN_SATELLITE_SELECTION_SWEEP:
     USE_REAL_PS = False
     RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
     EXPERIMENTS = [
-        ([1, 1], "Proposed, epsilon=0.01", 0.01),
-        ([1, 1], "Proposed, epsilon=0.001", 0.001),
-        ([3, 1], "Visible-Uniform", IMBALANCE_EPSILON),
-        ([4, 1], "Highest-Elevation", IMBALANCE_EPSILON),
+        #([1, 1], "Proposed, epsilon=0.01", 0.01),
+        #([1, 1], "Proposed, epsilon=0.001", 0.001),
+        #([3, 1], "Visible-Uniform", IMBALANCE_EPSILON),
+        #([4, 1], "Highest-Elevation", IMBALANCE_EPSILON),
         ([5, 1], "Load-Link-Aware", IMBALANCE_EPSILON),
+        ([6, 1], "UE Load-Link-Aware", IMBALANCE_EPSILON),
     ]
 
     # Satellite-selection baselines keep the proposed backoff controller fixed
@@ -270,7 +271,7 @@ if epsilon_sweep:
 
 # Current single-run experiment.
 num = 10000
-m = [1, 1] #Satellite selection mode and backoff control mode. 
+m = [5, 1] #Satellite selection mode and backoff control mode. 
 USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
