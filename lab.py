@@ -107,6 +107,7 @@ if RUN_SATELLITE_SELECTION_SWEEP:
         ([1, 1], "Proposed, epsilon=0.001", 0.001),
         ([3, 1], "Visible-Uniform", IMBALANCE_EPSILON),
         ([4, 1], "Highest-Elevation", IMBALANCE_EPSILON),
+        ([5, 1], "Load-Link-Aware", IMBALANCE_EPSILON),
     ]
 
     # Satellite-selection baselines keep the proposed backoff controller fixed

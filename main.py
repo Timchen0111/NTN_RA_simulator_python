@@ -24,7 +24,9 @@ class controller:
         self.history_reward = []
         self.ue_list = []
         self.selection_solver_failures = 0
-    def set_group_probabilities_for_rao(self, n, selection_mode, use_convex_solver=False, imbalance_epsilon=0.01):
+        self.last_load_indicator = None
+        self.load_aware_eta = 1.0
+    def set_group_probabilities_for_rao(self, n, selection_mode, use_convex_solver=False, imbalance_epsilon=0.01, preamble_count=None):
         if self.group_weight_table is None:
             self.A_by_group = {}
             return
@@ -47,6 +49,56 @@ class controller:
                 a_g = np.zeros(self.sat_num)
                 a_g[top_satellite] = 1.0
                 current_probabilities[group_key] = a_g
+            self.A_by_group = current_probabilities
+            return
+        if selection_mode == 5:
+            # Mode 5 baseline: group-wise load-and-link-aware selection.
+            # It uses the latest stored estimated satellite load as the
+            # broadcast load indicator, normalized by the preamble count.
+            if ps_by_group is None:
+                raise ValueError("Mode 5 requires group_ps_table.")
+            load_indicator = (
+                np.zeros(self.sat_num)
+                if self.last_load_indicator is None
+                else np.asarray(self.last_load_indicator, dtype=float)
+            )
+            if len(load_indicator) != self.sat_num:
+                raise ValueError(
+                    f"Mode 5 load indicator length {len(load_indicator)} "
+                    f"does not match sat_num {self.sat_num}."
+                )
+            load_scale = float(preamble_count) if preamble_count is not None else 1.0
+            if load_scale <= 0:
+                raise ValueError("Mode 5 preamble_count must be positive.")
+            normalized_load = np.maximum(load_indicator, 0.0) / load_scale
+            load_penalty = np.exp(-self.load_aware_eta * normalized_load)
+
+            current_probabilities = {}
+            for group in weights.keys():
+                group_key = tuple(group)
+                ps_g = np.asarray(ps_by_group[group_key], dtype=float)
+                if len(ps_g) != self.sat_num:
+                    raise ValueError(
+                        f"Mode 5 p_s vector length {len(ps_g)} does not match "
+                        f"sat_num {self.sat_num} for group {group_key}."
+                    )
+                selectable = np.isfinite(ps_g) & (ps_g > 0)
+                utility = np.zeros(self.sat_num)
+                utility[selectable] = ps_g[selectable] * load_penalty[selectable]
+                utility_sum = np.sum(utility)
+                if utility_sum > 0 and np.isfinite(utility_sum):
+                    current_probabilities[group_key] = utility / utility_sum
+                else:
+                    # Degenerate fallback: if all utilities vanish, choose the
+                    # satellite with the best precomputed link probability.
+                    finite_ps = np.where(np.isfinite(ps_g), ps_g, -np.inf)
+                    best_satellite = int(np.argmax(finite_ps))
+                    a_g = np.zeros(self.sat_num)
+                    if finite_ps[best_satellite] > -np.inf:
+                        a_g[best_satellite] = 1.0
+                    else:
+                        a_g[:] = 1.0 / self.sat_num
+                    current_probabilities[group_key] = a_g
             self.A_by_group = current_probabilities
             return
         if use_convex_solver and ps_by_group is not None:
@@ -794,12 +846,22 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
                 idle_ue_count += 1
         
         ctrl.actualPi = np.concatenate(([idle_ue_count / NUM_UE], real_counts / NUM_UE)) #更新真實pi供測試參考，index 0 為 idle state
+        if n == 0:
+            Lambda = np.zeros(ctrl.sat_num)
+            current_n_hat = ctrl.N_estimate
+        else:
+            Lambda = ctrl.load_estimator(expected_tables) #每個RAO都呼叫一次load estimator，並且傳入預計算好的期望值表
+            current_n_hat = ctrl.N_estimate
+        # Mode 5 uses the latest available previous-RAO load report before
+        # making the current RAO's satellite selection decision.
+        ctrl.last_load_indicator = Lambda.copy()
         #Controller-side processing
         ctrl.set_group_probabilities_for_rao(
             n,
             selection_mode=selection_mode,
             use_convex_solver=(selection_mode == 1),
             imbalance_epsilon=IMBALANCE_EPSILON,
+            preamble_count=sat_list[0].Z,
         )
         # Compute the precomputed p_s from the group selection policy; optionally replace it with lagged real p_s for control.
         if selection_mode == 2:
@@ -817,11 +879,7 @@ def main(RHO, SECONDS, NUM_UE,MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=Fa
             precomputed_p_s = calculate_ps(ctrl,n,group_weight_table, group_ps_table)
         p_s = last_real_p_s if (USE_REAL_PS and last_real_p_s is not None) else precomputed_p_s
         #print(f"Precomputed p_s for RAO {n}: {p_s:.4f}")
-        if n == 0:
-            Lambda = np.zeros(ctrl.sat_num)
-            current_n_hat = ctrl.N_estimate
-        else:
-            Lambda = ctrl.load_estimator(expected_tables) #每個RAO都呼叫一次load estimator，並且傳入預計算好的期望值表
+        if n > 0:
             ctrl.satellite_selection(Lambda=Lambda,MODE=selection_mode, n=n, target_location=geo, t=current_t)
             ctrl.backoff_control(total_load=sum(Lambda), rho=rho_rao, p_d = ue_list[0].QoS_requirement, p_s=p_s, K=ctrl.sat_num, Z=sat_list[0].Z,backoff_mode=backoff_mode,n=n)
             current_n_hat = ctrl.N_estimate
