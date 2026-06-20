@@ -200,7 +200,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
 
     validation_results = []
     for rho in RHO_VALUES:
-        print(f"\nRunning estimation validation rho sweep: rho={rho}")
+        print(f"\nRunning estimation validation lambda sweep: lambda={rho}")
         avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
             rho,
             SECONDS,
@@ -259,8 +259,8 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
         linewidth=1.6,
         color="#3498db",
     )
-    plt.title(r"Overall-Time $p_s$ MAE under Different $\rho$")
-    plt.xlabel(r"Arrival rate $\rho$ (packets/s)")
+    plt.title(r"Overall-Time $p_s$ MAE under Different $\lambda$")
+    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
     plt.ylabel(r"$p_s$ MAE")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -288,8 +288,8 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             width=bar_width,
             label=state_label,
         )
-    plt.title(r"Overall-Time $\pi$ Estimation MAE under Different $\rho$")
-    plt.xlabel(r"Arrival rate $\rho$ (packets/s)")
+    plt.title(r"Overall-Time $\pi$ Estimation MAE under Different $\lambda$")
+    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
     plt.ylabel(r"$\pi$ MAE")
     plt.xticks(x, [f"{rho:g}" for rho in rho_axis])
     plt.grid(True, axis="y", alpha=0.3)
@@ -305,8 +305,8 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
         linewidth=1.6,
         color="#8e44ad",
     )
-    plt.title(r"Final UE Number Estimation Error under Different $\rho$")
-    plt.xlabel(r"Arrival rate $\rho$ (packets/s)")
+    plt.title(r"Final UE Number Estimation Error under Different $\lambda$")
+    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
     plt.ylabel(r"Final $N$ absolute relative error (%)")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -319,7 +319,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             for idx, value in enumerate(item["pi_mae_by_state"])
         )
         print(
-            f"rho={item['rho']:.4f}: "
+            f"lambda={item['rho']:.4f}: "
             f"p_s_MAE={item['ps_mae']:.6f}, "
             f"true_system_PLR={item['plr']:.4f}, "
             f"final_N={item['final_n_estimate']:.2f}, "
@@ -337,7 +337,7 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
     FIXED_EPSILON_MODE = [1, 1]
     ADAPTIVE_EPSILON_MODE = [6, 1]
     FIXED_EPSILON_RHO = 1.0
-    FIXED_EPSILON_VALUES = [0.0, 1e-4, 1e-3, 1e-2, 1e-1]
+    FIXED_EPSILON_VALUES = [1e-4, 1e-3, 1e-2, 1e-1]
     ADAPTIVE_EPSILON_RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
     ADAPTIVE_EPSILON_ALPHA = 2.0
 
@@ -358,35 +358,31 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
             pbar_s = np.mean([item["precomputed"] for item in ps_history])
         else:
             pbar_s = np.nan
-        load_variance = -np.mean(load_imbalance_history) if len(load_imbalance_history) > 0 else np.nan
         fixed_epsilon_results.append({
             "epsilon": eps,
             "pbar_s": pbar_s,
-            "load_variance": load_variance,
             "plr": plr,
             "throughput": avg_throughput,
         })
 
-    epsilon_labels = [f"{item['epsilon']:.0e}" if item["epsilon"] > 0 else "0" for item in fixed_epsilon_results]
+    epsilon_values_for_plot = np.array([item["epsilon"] for item in fixed_epsilon_results])
+    epsilon_labels = [f"{item['epsilon']:.0e}" for item in fixed_epsilon_results]
     pbar_values = np.array([item["pbar_s"] for item in fixed_epsilon_results])
-    load_variance_values = np.array([item["load_variance"] for item in fixed_epsilon_results])
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True, dpi=120)
-    fig.suptitle("Fixed Imbalance Epsilon Trade-off", fontsize=14)
-    axes[0].plot(epsilon_labels, pbar_values, marker="o", linewidth=1.6, color="#3498db")
-    axes[0].set_ylabel(r"Average $\bar{p}_s$")
-    axes[0].grid(True, alpha=0.3)
-
-    axes[1].plot(epsilon_labels, load_variance_values, marker="o", linewidth=1.6, color="#f39c12")
-    axes[1].set_xlabel(r"Fixed imbalance threshold $\epsilon$")
-    axes[1].set_ylabel("Load variance across satellites")
-    axes[1].grid(True, alpha=0.3)
+    plt.figure(figsize=(10, 6), dpi=120)
+    plt.plot(epsilon_values_for_plot, pbar_values, marker="o", linewidth=1.6, color="#3498db")
+    plt.xscale("log")
+    plt.xticks(epsilon_values_for_plot, epsilon_labels)
+    plt.title(r"Average $\bar{p}_s$ under Fixed Imbalance Epsilon")
+    plt.xlabel(r"Fixed imbalance threshold $\epsilon$ (log scale)")
+    plt.ylabel(r"Average $\bar{p}_s$")
+    plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
 
     adaptive_epsilon_results = []
     for rho in ADAPTIVE_EPSILON_RHO_VALUES:
-        print(f"\nRunning adaptive-epsilon trajectory: rho={rho}")
+        print(f"\nRunning adaptive-epsilon trajectory: lambda={rho}")
         avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
             rho,
             SECONDS,
@@ -415,9 +411,9 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
             np.arange(len(epsilon_values)),
             epsilon_values,
             linewidth=1.4,
-            label=rf"$\rho={item['rho']:g}$",
+            label=rf"$\lambda={item['rho']:g}$",
         )
-    plt.title(r"Adaptive Imbalance Epsilon under Different $\rho$")
+    plt.title(r"Adaptive Imbalance Epsilon under Different $\lambda$")
     plt.xlabel("Time Slot (n)")
     plt.ylabel(r"Adaptive imbalance threshold $\epsilon^m$")
     plt.grid(True, alpha=0.3)
@@ -430,14 +426,13 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
         print(
             f"fixed epsilon={item['epsilon']:.4g}: "
             f"avg_p_s={item['pbar_s']:.6f}, "
-            f"load_variance={item['load_variance']:.6f}, "
             f"PLR={item['plr']:.4f}, "
             f"throughput={item['throughput']:.2f}"
         )
     for item in adaptive_epsilon_results:
         final_epsilon = item["epsilon_values"][-1] if len(item["epsilon_values"]) > 0 else np.nan
         print(
-            f"adaptive rho={item['rho']:.4f}: "
+            f"adaptive lambda={item['rho']:.4f}: "
             f"final_epsilon={final_epsilon:.6g}, "
             f"PLR={item['plr']:.4f}, "
             f"throughput={item['throughput']:.2f}"
