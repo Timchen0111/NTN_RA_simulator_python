@@ -5,7 +5,8 @@ import main
 
 RUN_RHO_SWEEP = False
 RUN_SATELLITE_SELECTION_SWEEP = False
-RUN_ESTIMATION_VALIDATION_RHO_SWEEP = True
+RUN_SATELLITE_SELECTION_PERFORMANCE = True
+RUN_ESTIMATION_VALIDATION_RHO_SWEEP = False
 epsilon_sweep = False
 
 if RUN_RHO_SWEEP:
@@ -325,6 +326,121 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             f"N_signed_error={item['n_signed_error']:+.2f}, "
             f"N_abs_relative_error={item['n_abs_relative_error'] * 100:.2f}%, "
             f"Pi_MAE_by_state=[{pi_summary}]"
+        )
+    raise SystemExit
+
+if RUN_SATELLITE_SELECTION_PERFORMANCE:
+    NUM_UE = 10000
+    SECONDS = 180
+    SEED = 42
+    USE_REAL_PS = False
+    FIXED_EPSILON_MODE = [1, 1]
+    ADAPTIVE_EPSILON_MODE = [6, 1]
+    FIXED_EPSILON_RHO = 1.0
+    FIXED_EPSILON_VALUES = [0.0, 1e-4, 1e-3, 1e-2, 1e-1]
+    ADAPTIVE_EPSILON_RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+    ADAPTIVE_EPSILON_ALPHA = 2.0
+
+    fixed_epsilon_results = []
+    for eps in FIXED_EPSILON_VALUES:
+        print(f"\nRunning fixed-epsilon satellite selection performance: epsilon={eps}")
+        avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
+            FIXED_EPSILON_RHO,
+            SECONDS,
+            NUM_UE,
+            FIXED_EPSILON_MODE,
+            SEED,
+            IMBALANCE_EPSILON=eps,
+            USE_REAL_PS=USE_REAL_PS,
+        )
+        ps_history = run_history.get("ps_history", [])
+        if len(ps_history) > 0:
+            pbar_s = np.mean([item["precomputed"] for item in ps_history])
+        else:
+            pbar_s = np.nan
+        load_variance = -np.mean(load_imbalance_history) if len(load_imbalance_history) > 0 else np.nan
+        fixed_epsilon_results.append({
+            "epsilon": eps,
+            "pbar_s": pbar_s,
+            "load_variance": load_variance,
+            "plr": plr,
+            "throughput": avg_throughput,
+        })
+
+    epsilon_labels = [f"{item['epsilon']:.0e}" if item["epsilon"] > 0 else "0" for item in fixed_epsilon_results]
+    pbar_values = np.array([item["pbar_s"] for item in fixed_epsilon_results])
+    load_variance_values = np.array([item["load_variance"] for item in fixed_epsilon_results])
+
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True, dpi=120)
+    fig.suptitle("Fixed Imbalance Epsilon Trade-off", fontsize=14)
+    axes[0].plot(epsilon_labels, pbar_values, marker="o", linewidth=1.6, color="#3498db")
+    axes[0].set_ylabel(r"Average $\bar{p}_s$")
+    axes[0].grid(True, alpha=0.3)
+
+    axes[1].plot(epsilon_labels, load_variance_values, marker="o", linewidth=1.6, color="#f39c12")
+    axes[1].set_xlabel(r"Fixed imbalance threshold $\epsilon$")
+    axes[1].set_ylabel("Load variance across satellites")
+    axes[1].grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    adaptive_epsilon_results = []
+    for rho in ADAPTIVE_EPSILON_RHO_VALUES:
+        print(f"\nRunning adaptive-epsilon trajectory: rho={rho}")
+        avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
+            rho,
+            SECONDS,
+            NUM_UE,
+            ADAPTIVE_EPSILON_MODE,
+            SEED,
+            IMBALANCE_EPSILON=0.01,
+            USE_REAL_PS=USE_REAL_PS,
+            ADAPTIVE_EPSILON_ALPHA=ADAPTIVE_EPSILON_ALPHA,
+        )
+        epsilon_history = run_history.get("adaptive_epsilon_history", [])
+        epsilon_values = np.array([item["epsilon"] for item in epsilon_history], dtype=float)
+        adaptive_epsilon_results.append({
+            "rho": rho,
+            "epsilon_values": epsilon_values,
+            "plr": plr,
+            "throughput": avg_throughput,
+        })
+
+    plt.figure(figsize=(10, 6), dpi=120)
+    for item in adaptive_epsilon_results:
+        epsilon_values = item["epsilon_values"]
+        if len(epsilon_values) == 0:
+            continue
+        plt.plot(
+            np.arange(len(epsilon_values)),
+            epsilon_values,
+            linewidth=1.4,
+            label=rf"$\rho={item['rho']:g}$",
+        )
+    plt.title(r"Adaptive Imbalance Epsilon under Different $\rho$")
+    plt.xlabel("Time Slot (n)")
+    plt.ylabel(r"Adaptive imbalance threshold $\epsilon^m$")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- Satellite Selection Performance Complete ---")
+    for item in fixed_epsilon_results:
+        print(
+            f"fixed epsilon={item['epsilon']:.4g}: "
+            f"avg_p_s={item['pbar_s']:.6f}, "
+            f"load_variance={item['load_variance']:.6f}, "
+            f"PLR={item['plr']:.4f}, "
+            f"throughput={item['throughput']:.2f}"
+        )
+    for item in adaptive_epsilon_results:
+        final_epsilon = item["epsilon_values"][-1] if len(item["epsilon_values"]) > 0 else np.nan
+        print(
+            f"adaptive rho={item['rho']:.4f}: "
+            f"final_epsilon={final_epsilon:.6g}, "
+            f"PLR={item['plr']:.4f}, "
+            f"throughput={item['throughput']:.2f}"
         )
     raise SystemExit
 
