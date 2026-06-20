@@ -5,8 +5,8 @@ import main
 
 RUN_RHO_SWEEP = False
 RUN_SATELLITE_SELECTION_SWEEP = False
-RUN_SATELLITE_SELECTION_PERFORMANCE = True
-RUN_ESTIMATION_VALIDATION_RHO_SWEEP = False
+RUN_SATELLITE_SELECTION_PERFORMANCE = False
+RUN_ESTIMATION_VALIDATION_RHO_SWEEP = True
 epsilon_sweep = False
 
 if RUN_RHO_SWEEP:
@@ -190,7 +190,7 @@ if RUN_SATELLITE_SELECTION_SWEEP:
 
 if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
     NUM_UE = 10000
-    SECONDS = 180
+    SECONDS = 1
     SEED = 42
     MODE = [6, 1]
     IMBALANCE_EPSILON = 0.01
@@ -230,13 +230,13 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             if pi_history.ndim == 1:
                 pi_history = pi_history.reshape(1, -1)
             state_count = min(pi_history.shape[1], estimated_pi.size)
-            pi_mae_by_state = np.mean(
-                np.abs(pi_history[:, :state_count] - estimated_pi[:state_count]),
+            pi_error_by_state = np.mean(
+                estimated_pi[:state_count] - pi_history[:, :state_count],
                 axis=0,
             )
         else:
             state_count = estimated_pi.size
-            pi_mae_by_state = np.full(state_count, np.nan)
+            pi_error_by_state = np.full(state_count, np.nan)
 
         validation_results.append({
             "rho": rho,
@@ -246,7 +246,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             "final_n_estimate": final_n_estimate,
             "n_signed_error": n_signed_error,
             "n_abs_relative_error": n_abs_relative_error,
-            "pi_mae_by_state": pi_mae_by_state,
+            "pi_error_by_state": pi_error_by_state,
         })
 
     rho_axis = np.array([item["rho"] for item in validation_results])
@@ -259,18 +259,18 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
         linewidth=1.6,
         color="#3498db",
     )
-    plt.title(r"Overall-Time $p_s$ MAE under Different $\lambda$")
-    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
-    plt.ylabel(r"$p_s$ MAE")
+    plt.title("Successful Transmission Probability Error under Different Arrival Rates")
+    plt.xlabel("Arrival rate (packets/s)")
+    plt.ylabel("Mean absolute error")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
 
-    max_state_count = max(len(item["pi_mae_by_state"]) for item in validation_results)
+    max_state_count = max(len(item["pi_error_by_state"]) for item in validation_results)
     pi_error_matrix = np.vstack([
         np.pad(
-            item["pi_mae_by_state"],
-            (0, max_state_count - len(item["pi_mae_by_state"])),
+            item["pi_error_by_state"],
+            (0, max_state_count - len(item["pi_error_by_state"])),
             constant_values=np.nan,
         )
         for item in validation_results
@@ -288,9 +288,10 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             width=bar_width,
             label=state_label,
         )
-    plt.title(r"Overall-Time $\pi$ Estimation MAE under Different $\lambda$")
-    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
-    plt.ylabel(r"$\pi$ MAE")
+    plt.axhline(y=0.0, color="black", linestyle="--", linewidth=1.0, alpha=0.6)
+    plt.title("State Probability Estimation Error under Different Arrival Rates")
+    plt.xlabel("Arrival rate (packets/s)")
+    plt.ylabel("Mean error (estimated minus true)")
     plt.xticks(x, [f"{rho:g}" for rho in rho_axis])
     plt.grid(True, axis="y", alpha=0.3)
     plt.legend()
@@ -305,9 +306,9 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
         linewidth=1.6,
         color="#8e44ad",
     )
-    plt.title(r"Final UE Number Estimation Error under Different $\lambda$")
-    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
-    plt.ylabel(r"Final $N$ absolute relative error (%)")
+    plt.title("Final UE Number Estimation Error under Different Arrival Rates")
+    plt.xlabel("Arrival rate (packets/s)")
+    plt.ylabel("Final absolute relative error (%)")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
@@ -316,7 +317,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
     for item in validation_results:
         pi_summary = ", ".join(
             f"{'Idle' if idx == 0 else f'State {idx}'}={value:.6f}"
-            for idx, value in enumerate(item["pi_mae_by_state"])
+            for idx, value in enumerate(item["pi_error_by_state"])
         )
         print(
             f"lambda={item['rho']:.4f}: "
@@ -325,7 +326,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             f"final_N={item['final_n_estimate']:.2f}, "
             f"N_signed_error={item['n_signed_error']:+.2f}, "
             f"N_abs_relative_error={item['n_abs_relative_error'] * 100:.2f}%, "
-            f"Pi_MAE_by_state=[{pi_summary}]"
+            f"state_probability_mean_error_by_state=[{pi_summary}]"
         )
     raise SystemExit
 
@@ -528,7 +529,7 @@ USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(1.0, 180, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(1.0, 1, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
 load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {
