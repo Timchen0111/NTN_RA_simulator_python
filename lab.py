@@ -5,6 +5,7 @@ import main
 
 RUN_RHO_SWEEP = False
 RUN_SATELLITE_SELECTION_SWEEP = False
+RUN_ESTIMATION_VALIDATION_RHO_SWEEP = True
 epsilon_sweep = False
 
 if RUN_RHO_SWEEP:
@@ -13,7 +14,7 @@ if RUN_RHO_SWEEP:
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
     MODES = [
         ([1, 1], "Proposed"),
         ([1, 2], "Dynamic ACB"),
@@ -101,7 +102,7 @@ if RUN_SATELLITE_SELECTION_SWEEP:
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
     EXPERIMENTS = [
         #([1, 1], "Proposed, epsilon=0.01", 0.01),
         #([1, 1], "Proposed, epsilon=0.001", 0.001),
@@ -184,6 +185,147 @@ if RUN_SATELLITE_SELECTION_SWEEP:
                 f"avg_delay_ms={item['average_delay_ms']:.2f}, "
                 f"final_N={item['final_n_estimate']:.2f}"
             )
+    raise SystemExit
+
+if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
+    NUM_UE = 10000
+    SECONDS = 180
+    SEED = 42
+    MODE = [6, 1]
+    IMBALANCE_EPSILON = 0.01
+    USE_REAL_PS = False
+    ADAPTIVE_EPSILON_ALPHA = 2.0
+    RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+
+    validation_results = []
+    for rho in RHO_VALUES:
+        print(f"\nRunning estimation validation rho sweep: rho={rho}")
+        avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
+            rho,
+            SECONDS,
+            NUM_UE,
+            MODE,
+            SEED,
+            IMBALANCE_EPSILON,
+            USE_REAL_PS=USE_REAL_PS,
+            ADAPTIVE_EPSILON_ALPHA=ADAPTIVE_EPSILON_ALPHA,
+        )
+
+        ps_history = run_history.get("ps_history", [])
+        if len(ps_history) > 0:
+            ps_error = np.array([item["error"] for item in ps_history], dtype=float)
+            ps_mae = np.mean(np.abs(ps_error))
+        else:
+            ps_mae = np.nan
+
+        final_n_estimate = n_history[-1] if len(n_history) > 0 else np.nan
+        n_signed_error = final_n_estimate - NUM_UE
+        n_abs_relative_error = abs(n_signed_error) / NUM_UE if np.isfinite(final_n_estimate) else np.nan
+
+        pi_history = np.asarray(actual_pi, dtype=float)
+        estimated_active_pi = np.asarray(observe_pi, dtype=float)
+        estimated_pi = np.concatenate(([max(0.0, 1.0 - np.sum(estimated_active_pi))], estimated_active_pi))
+        if pi_history.size > 0:
+            if pi_history.ndim == 1:
+                pi_history = pi_history.reshape(1, -1)
+            state_count = min(pi_history.shape[1], estimated_pi.size)
+            pi_mae_by_state = np.mean(
+                np.abs(pi_history[:, :state_count] - estimated_pi[:state_count]),
+                axis=0,
+            )
+        else:
+            state_count = estimated_pi.size
+            pi_mae_by_state = np.full(state_count, np.nan)
+
+        validation_results.append({
+            "rho": rho,
+            "plr": plr,
+            "throughput": avg_throughput,
+            "ps_mae": ps_mae,
+            "final_n_estimate": final_n_estimate,
+            "n_signed_error": n_signed_error,
+            "n_abs_relative_error": n_abs_relative_error,
+            "pi_mae_by_state": pi_mae_by_state,
+        })
+
+    rho_axis = np.array([item["rho"] for item in validation_results])
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(
+        rho_axis,
+        np.array([item["ps_mae"] for item in validation_results]),
+        marker="o",
+        linewidth=1.6,
+        color="#3498db",
+    )
+    plt.title(r"Overall-Time $p_s$ MAE under Different $\rho$")
+    plt.xlabel(r"Arrival rate $\rho$ (packets/s)")
+    plt.ylabel(r"$p_s$ MAE")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    max_state_count = max(len(item["pi_mae_by_state"]) for item in validation_results)
+    pi_error_matrix = np.vstack([
+        np.pad(
+            item["pi_mae_by_state"],
+            (0, max_state_count - len(item["pi_mae_by_state"])),
+            constant_values=np.nan,
+        )
+        for item in validation_results
+    ])
+    x = np.arange(len(rho_axis))
+    bar_width = 0.8 / max_state_count
+
+    plt.figure(figsize=(11, 6))
+    for state_idx in range(max_state_count):
+        state_label = "Idle" if state_idx == 0 else f"State {state_idx}"
+        offsets = x - 0.4 + bar_width * (state_idx + 0.5)
+        plt.bar(
+            offsets,
+            pi_error_matrix[:, state_idx],
+            width=bar_width,
+            label=state_label,
+        )
+    plt.title(r"Overall-Time $\pi$ Estimation MAE under Different $\rho$")
+    plt.xlabel(r"Arrival rate $\rho$ (packets/s)")
+    plt.ylabel(r"$\pi$ MAE")
+    plt.xticks(x, [f"{rho:g}" for rho in rho_axis])
+    plt.grid(True, axis="y", alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(
+        rho_axis,
+        np.array([item["n_abs_relative_error"] for item in validation_results]) * 100.0,
+        marker="o",
+        linewidth=1.6,
+        color="#8e44ad",
+    )
+    plt.title(r"Final UE Number Estimation Error under Different $\rho$")
+    plt.xlabel(r"Arrival rate $\rho$ (packets/s)")
+    plt.ylabel(r"Final $N$ absolute relative error (%)")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- Estimation Validation Rho Sweep Complete ---")
+    for item in validation_results:
+        pi_summary = ", ".join(
+            f"{'Idle' if idx == 0 else f'State {idx}'}={value:.6f}"
+            for idx, value in enumerate(item["pi_mae_by_state"])
+        )
+        print(
+            f"rho={item['rho']:.4f}: "
+            f"p_s_MAE={item['ps_mae']:.6f}, "
+            f"true_system_PLR={item['plr']:.4f}, "
+            f"final_N={item['final_n_estimate']:.2f}, "
+            f"N_signed_error={item['n_signed_error']:+.2f}, "
+            f"N_abs_relative_error={item['n_abs_relative_error'] * 100:.2f}%, "
+            f"Pi_MAE_by_state=[{pi_summary}]"
+        )
     raise SystemExit
 
 if epsilon_sweep:

@@ -17,7 +17,7 @@ IMBALANCE_EPSILON = 0.01
 
 if RUN_MODE6_ALPHA_SWEEP:
     MODE = [6, 1]
-    LAMBDA_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    LAMBDA_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
     ALPHA_VALUES = np.array([0.25, 0.5, 1.0, 2.0])
     ADAPTIVE_EPSILON_MIN = 1e-4
     ADAPTIVE_EPSILON_MAX = 1e-2
