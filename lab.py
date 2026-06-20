@@ -275,7 +275,7 @@ USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(1, 180, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(1.0, 180, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
 load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {
@@ -377,10 +377,33 @@ if pi_history.size > 0:
     time_slots = np.arange(pi_history.shape[0]) * record_interval
     state_count = pi_history.shape[1]
 
-    plt.figure(figsize=(10, 6))
-    for state_idx in range(state_count):
-        state_label = "Idle" if state_idx == 0 else f"State {state_idx}"
-        line = plt.plot(
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    fig.suptitle(r"Convergence of State Distributions ($\pi_n$)", fontsize=14)
+
+    # Draw idle probability separately so its larger scale does not flatten the active states.
+    idle_line = axes[0].plot(
+        time_slots,
+        pi_history[:, 0],
+        label="Idle",
+        linewidth=1.5,
+    )[0]
+    if estimated_pi.size > 0:
+        axes[0].axhline(
+            y=estimated_pi[0],
+            color=idle_line.get_color(),
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.65,
+            label="Estimated Idle",
+        )
+    axes[0].set_title("Idle State")
+    axes[0].set_ylabel("Probability")
+    axes[0].grid(True, alpha=0.3)
+    axes[0].legend()
+
+    for state_idx in range(1, state_count):
+        state_label = f"State {state_idx}"
+        line = axes[1].plot(
             time_slots,
             pi_history[:, state_idx],
             label=state_label,
@@ -388,7 +411,7 @@ if pi_history.size > 0:
         )[0]
 
         if state_idx < estimated_pi.size:
-            plt.axhline(
+            axes[1].axhline(
                 y=estimated_pi[state_idx],
                 color=line.get_color(),
                 linestyle="--",
@@ -397,11 +420,11 @@ if pi_history.size > 0:
                 label=f"Estimated {state_label}",
             )
 
-    plt.title(r"Convergence of State Distributions ($\pi_n$)")
-    plt.xlabel("Time Slot (n)")
-    plt.ylabel("Probability")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
+    axes[1].set_title("Active States")
+    axes[1].set_xlabel("Time Slot (n)")
+    axes[1].set_ylabel("Probability")
+    axes[1].grid(True, alpha=0.3)
+    axes[1].legend()
     plt.tight_layout()
     plt.show()
 else:

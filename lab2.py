@@ -4,6 +4,7 @@ import numpy as np
 import main
 
 
+RUN_MODE6_ALPHA_SWEEP = True
 RUN_MODE5_ETA_SWEEP = False
 RUN_EPSILON_N_ESTIMATION_SWEEP = False
 
@@ -12,6 +13,66 @@ SECONDS = 20
 SEED = 42
 USE_REAL_PS = False
 IMBALANCE_EPSILON = 0.01
+
+
+if RUN_MODE6_ALPHA_SWEEP:
+    MODE = [6, 1]
+    LAMBDA_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    ALPHA_VALUES = np.array([0.25, 0.5, 1.0, 2.0])
+    ADAPTIVE_EPSILON_MIN = 1e-4
+    ADAPTIVE_EPSILON_MAX = 1e-2
+    ADAPTIVE_EPSILON_BETA = 0.2
+
+    alpha_results = {alpha: [] for alpha in ALPHA_VALUES}
+    for alpha in ALPHA_VALUES:
+        for lam in LAMBDA_VALUES:
+            print(f"\nRunning MODE6 alpha sweep: alpha={alpha}, lambda={lam}")
+            avg_throughput, plr, n_history, actual_pi, observe_pi, reward_history, run_history = main.main(
+                lam,
+                SECONDS,
+                NUM_UE,
+                MODE,
+                SEED,
+                IMBALANCE_EPSILON=IMBALANCE_EPSILON,
+                USE_REAL_PS=USE_REAL_PS,
+                ADAPTIVE_EPSILON_MIN=ADAPTIVE_EPSILON_MIN,
+                ADAPTIVE_EPSILON_MAX=ADAPTIVE_EPSILON_MAX,
+                ADAPTIVE_EPSILON_ALPHA=alpha,
+                ADAPTIVE_EPSILON_BETA=ADAPTIVE_EPSILON_BETA,
+            )
+            epsilon_history = run_history.get("adaptive_epsilon_history", [])
+            final_epsilon = epsilon_history[-1]["epsilon"] if len(epsilon_history) > 0 else np.nan
+            alpha_results[alpha].append({
+                "lambda": lam,
+                "plr": plr,
+                "throughput": avg_throughput,
+                "average_delay_ms": run_history.get("average_delay_ms", np.nan),
+                "final_epsilon": final_epsilon,
+            })
+
+    plt.figure(figsize=(10, 6))
+    for alpha in ALPHA_VALUES:
+        lambda_axis = np.array([item["lambda"] for item in alpha_results[alpha]])
+        plr_values = np.array([item["plr"] for item in alpha_results[alpha]])
+        plt.plot(lambda_axis, plr_values, marker="o", linewidth=1.6, label=rf"$\alpha={alpha:g}$")
+    plt.title(r"MODE6 PLR under Different $\alpha$")
+    plt.xlabel(r"Arrival rate $\lambda$ (packets/s)")
+    plt.ylabel("Packet Loss Rate")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- MODE6 Alpha Sweep Complete ---")
+    for alpha in ALPHA_VALUES:
+        for item in alpha_results[alpha]:
+            print(
+                f"alpha={alpha:.4g}, lambda={item['lambda']:.4f}: "
+                f"PLR={item['plr']:.4f}, "
+                f"throughput={item['throughput']:.2f}, "
+                f"avg_delay_ms={item['average_delay_ms']:.2f}, "
+                f"final_epsilon={item['final_epsilon']:.6g}"
+            )
 
 
 if RUN_MODE5_ETA_SWEEP:
