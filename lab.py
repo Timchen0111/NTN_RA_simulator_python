@@ -3,10 +3,10 @@ import numpy as np
 
 import main
 
-RUN_ALL = True
+RUN_ALL = False
 RUN_RHO_SWEEP = False
 RUN_SATELLITE_SELECTION_SWEEP = False
-RUN_SATELLITE_SELECTION_PERFORMANCE = False #Different epsilon values
+RUN_SATELLITE_SELECTION_PERFORMANCE = True #Different epsilon values
 RUN_ESTIMATION_VALIDATION_RHO_SWEEP = False
 epsilon_sweep = False
 if RUN_ALL:
@@ -17,11 +17,11 @@ if RUN_ALL:
     USE_REAL_PS = False
     RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
     MODES = [
-        ([1, 1], "Proposed Satellite Selection and Backoff Control"),
-        ([1, 2], "Proposed Satellite Selection and Dynamic ACB"),
-        ([1, 3], "Proposed Satellite Selection and State-aware P-ACB"),
-        ([3, 1], "Visible-Uniform Satellite Selection and Proposed Backoff Control"),
-        ([4, 1], "Highest-Elevation Satellite Selection and Proposed Backoff Control"),
+        ([1, 1], "Proposed / Proposed"),
+        ([1, 2], "Proposed / DACB"),
+        ([1, 3], "Proposed / SA-ACB"),
+        ([3, 1], "VU / Proposed"),
+        ([4, 1], "HE / Proposed"),
     ]
 
     # Backoff settings 2 and 3 are ACB baselines; all other experiment parameters are
@@ -108,8 +108,8 @@ if RUN_RHO_SWEEP:
     RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
     MODES = [
         ([1, 1], "Proposed"),
-        ([1, 2], "Dynamic ACB"),
-        ([1, 3], "State-aware P-ACB"),
+        ([1, 2], "DACB"),
+        ([1, 3], "SA-ACB"),
     ]
 
     # Backoff settings 2 and 3 are ACB baselines; all other experiment parameters are
@@ -195,11 +195,11 @@ if RUN_SATELLITE_SELECTION_SWEEP:
     USE_REAL_PS = False
     RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
     EXPERIMENTS = [
-        #([1, 1], "Proposed, epsilon=0.01", 0.01),
-        #([1, 1], "Proposed, epsilon=0.001", 0.001),
-        #([3, 1], "Visible-Uniform", IMBALANCE_EPSILON),
-        #([4, 1], "Highest-Elevation", IMBALANCE_EPSILON),
-        ([5, 1], "Load-Link-Aware", IMBALANCE_EPSILON),
+        #([1, 1], "Proposed", 0.01),
+        #([1, 1], "Proposed", 0.001),
+        #([3, 1], "VU", IMBALANCE_EPSILON),
+        #([4, 1], "HE", IMBALANCE_EPSILON),
+        ([5, 1], "LLA", IMBALANCE_EPSILON),
     ]
 
     # Satellite-selection baselines keep the proposed backoff controller fixed
@@ -422,7 +422,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
 
 if RUN_SATELLITE_SELECTION_PERFORMANCE:
     NUM_UE = 10000
-    SECONDS = 1
+    SECONDS = 180
     SEED = 42
     USE_REAL_PS = False
     FIXED_EPSILON_MODE = [1, 1]
