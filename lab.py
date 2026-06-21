@@ -4,11 +4,13 @@ import numpy as np
 import main
 
 RUN_ALL = False
+RUN_QOS_DISTRIBUTION_COMPARISON = True
 RUN_RHO_SWEEP = False
 RUN_SATELLITE_SELECTION_SWEEP = False
-RUN_SATELLITE_SELECTION_PERFORMANCE = True #Different epsilon values
+RUN_SATELLITE_SELECTION_PERFORMANCE = False #Different epsilon values
 RUN_ESTIMATION_VALIDATION_RHO_SWEEP = False
 epsilon_sweep = False
+
 if RUN_ALL:
     NUM_UE = 10000
     SECONDS = 10
@@ -92,6 +94,79 @@ if RUN_ALL:
         for item in rho_results[label]:
             print(
                 f"{label}, arrival rate={item['rho']:.4f}: "
+                f"PLR={item['plr']:.4f}, "
+                f"throughput={item['throughput']:.2f}, "
+                f"avg_delay_ms={item['average_delay_ms']:.2f}, "
+                f"final_N={item['final_n_estimate']:.2f}"
+            )
+    raise SystemExit
+
+if RUN_QOS_DISTRIBUTION_COMPARISON:
+    NUM_UE = 10000
+    SECONDS = 10
+    SEED = 42
+    IMBALANCE_EPSILON = 0.001
+    USE_REAL_PS = False
+    RHO = 1.5
+    MODES = [
+        ([1, 1], "Proposed / Proposed"),
+        ([1, 2], "Proposed / DACB"),
+        ([1, 3], "Proposed / SA-ACB"),
+        ([3, 1], "VU / Proposed"),
+        ([4, 1], "HE / Proposed"),
+    ]
+    QOS_DISTRIBUTIONS = [
+        ("Q1\n[0.2,0.2,0.2,0.2,0.2]", np.array([0.2, 0.2, 0.2, 0.2, 0.2])),
+        ("Q2\n[0,0,0,0,1]", np.array([0.0, 0.0, 0.0, 0.0, 1.0])),
+        ("Q3\n[0.5,0,0,0,0.5]", np.array([0.5, 0.0, 0.0, 0.0, 0.5])),
+        ("Q4\n[0.1,0.1,0.2,0.3,0.3]", np.array([0.1, 0.1, 0.2, 0.3, 0.3])),
+    ]
+
+    qos_results = {label: [] for _, label in MODES}
+    for qos_label, qos_distribution in QOS_DISTRIBUTIONS:
+        for mode, label in MODES:
+            print(f"\nRunning QoS distribution comparison: {label}, {qos_label}, rho_s={RHO}")
+            avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
+                RHO,
+                SECONDS,
+                NUM_UE,
+                mode,
+                SEED,
+                IMBALANCE_EPSILON,
+                USE_REAL_PS=USE_REAL_PS,
+                QOS_DISTRIBUTION=qos_distribution,
+            )
+            final_n_estimate = n_history[-1] if len(n_history) > 0 else np.nan
+            qos_results[label].append({
+                "qos_label": qos_label,
+                "qos_distribution": qos_distribution,
+                "plr": plr,
+                "throughput": avg_throughput,
+                "average_delay_ms": run_history.get("average_delay_ms", np.nan),
+                "final_n_estimate": final_n_estimate,
+            })
+
+    x = np.arange(len(QOS_DISTRIBUTIONS))
+    bar_width = 0.8 / len(MODES)
+    plt.figure(figsize=(12, 6))
+    for mode_idx, (_, label) in enumerate(MODES):
+        offsets = x - 0.4 + bar_width * (mode_idx + 0.5)
+        plr_values = np.array([item["plr"] for item in qos_results[label]])
+        plt.bar(offsets, plr_values, width=bar_width, label=label)
+    plt.title("PLR Comparison under Different Delay Budget Distributions")
+    plt.xlabel("Delay budget distribution")
+    plt.ylabel("Packet Loss Rate")
+    plt.xticks(x, [label for label, _ in QOS_DISTRIBUTIONS])
+    plt.grid(True, axis="y", alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- QoS Distribution Comparison Complete ---")
+    for _, label in MODES:
+        for item in qos_results[label]:
+            print(
+                f"{label}, {item['qos_label']}: "
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
                 f"avg_delay_ms={item['average_delay_ms']:.2f}, "

@@ -733,10 +733,10 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
     print(f"Group weight table shape: {group_weight_table.shape}")
     print(f"Group ps table shape: {group_ps_table.shape}")
     if mode3_visible_random_ps_table is not None:
-        print(f"Mode 3 visible-uniform ps table shape: {mode3_visible_random_ps_table.shape}")
+        print(f"VU ps table shape: {mode3_visible_random_ps_table.shape}")
     return group_weight_table, group_ps_table, mode3_visible_random_ps_table
 
-def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=1.0, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=2.0, ADAPTIVE_EPSILON_BETA=0.2):
+def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=1.0, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=2.0, ADAPTIVE_EPSILON_BETA=0.2, QOS_DISTRIBUTION=None):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
     if MODE == 0:
@@ -757,6 +757,21 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         print(f"Satellite selection imbalance epsilon: {IMBALANCE_EPSILON}")
     print(f"Use lagged real p_s: {USE_REAL_PS}")
     print(f"Load-aware eta: {LOAD_AWARE_ETA}")
+    # Optional QoS sweep hook: keep the legacy uniform distribution when no
+    # experiment-specific delay budget distribution is provided.
+    if QOS_DISTRIBUTION is None:
+        qos_distribution = np.array([0.2, 0.2, 0.2, 0.2, 0.2], dtype=float)
+    else:
+        qos_distribution = np.asarray(QOS_DISTRIBUTION, dtype=float)
+        if qos_distribution.shape != (5,):
+            raise ValueError("QOS_DISTRIBUTION must contain five probabilities for delay budgets 1..5.")
+        if np.any(qos_distribution < 0) or not np.all(np.isfinite(qos_distribution)):
+            raise ValueError("QOS_DISTRIBUTION must contain finite non-negative probabilities.")
+        qos_sum = float(np.sum(qos_distribution))
+        if qos_sum <= 0:
+            raise ValueError("QOS_DISTRIBUTION must have a positive sum.")
+        qos_distribution = qos_distribution / qos_sum
+    print(f"Delay budget distribution: {qos_distribution.tolist()}")
     if selection_mode == 6:
         print(
             "Adaptive epsilon: "
@@ -831,7 +846,9 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         lat = c[0] + (r * np.sin(theta)) * lat_bound
         lon = c[1] + (r * np.cos(theta)) * lon_bound
         
-        ue_list.append(UE(location=[lat, lon], id=i, rho=RHO))
+        ue = UE(location=[lat, lon], id=i, rho=RHO)
+        ue.QoS_requirement = qos_distribution.copy()
+        ue_list.append(ue)
     ctrl.ue_list = ue_list #將UE列表傳給controller，讓controller可以在需要的時候訪問UE資訊
 
     ctrl.reset_agent()
@@ -918,7 +935,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
             # over satellites visible above 10 degrees, matching its UE-side rule.
             if mode3_visible_random_ps_table is None:
                 raise ValueError(
-                    "selection_mode 3 requires mode3_visible_random_ps_table. "
+                    "VU requires mode3_visible_random_ps_table. "
                     "Regenerate group_ps_table.npz with satellite_preselection.py."
             )
             precomputed_p_s = mode3_visible_random_ps_table[n]
