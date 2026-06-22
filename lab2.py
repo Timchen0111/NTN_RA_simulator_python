@@ -5,7 +5,8 @@ import main
 
 
 RUN_MODE6_ALPHA_SWEEP = False
-RUN_MODE5_ETA_SWEEP = True
+RUN_MODE5_ETA_SWEEP = False
+RUN_SATELLITE_SELECTION_VALIDATION = True
 RUN_EPSILON_N_ESTIMATION_SWEEP = False
 
 NUM_UE = 10000
@@ -13,6 +14,93 @@ SECONDS = 5
 SEED = 42
 USE_REAL_PS = False
 IMBALANCE_EPSILON = 0.01
+
+
+if RUN_SATELLITE_SELECTION_VALIDATION:
+    RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+    MODE5_ETA_VALUES = np.array([0.2, 1.0, 5.0])
+    EXPERIMENTS = [
+        ([3, 1], "VU", {}),
+        ([4, 1], "HE", {}),
+        ([6, 1], "MODE6", {}),
+    ]
+    EXPERIMENTS.extend(
+        ([5, 1], rf"MODE5, $\eta={eta:g}$", {"LOAD_AWARE_ETA": eta})
+        for eta in MODE5_ETA_VALUES
+    )
+
+    validation_results = {label: [] for _, label, _ in EXPERIMENTS}
+    for mode, label, extra_kwargs in EXPERIMENTS:
+        for rho in RHO_VALUES:
+            print(f"\nRunning satellite selection validation: {label}, rho_s={rho}")
+            avg_throughput, plr, n_history, actual_pi, observe_pi, reward_history, run_history = main.main(
+                rho,
+                SECONDS,
+                NUM_UE,
+                mode,
+                SEED,
+                IMBALANCE_EPSILON=IMBALANCE_EPSILON,
+                USE_REAL_PS=USE_REAL_PS,
+                **extra_kwargs,
+            )
+            final_n_estimate = n_history[-1] if len(n_history) > 0 else np.nan
+            validation_results[label].append({
+                "rho": rho,
+                "plr": plr,
+                "throughput": avg_throughput,
+                "average_delay_ms": run_history.get("average_delay_ms", np.nan),
+                "final_n_estimate": final_n_estimate,
+            })
+
+    plt.figure(figsize=(10, 6))
+    for _, label, _ in EXPERIMENTS:
+        rho_axis = np.array([item["rho"] for item in validation_results[label]])
+        plr_values = np.array([item["plr"] for item in validation_results[label]])
+        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=label)
+    plt.title("Satellite Selection PLR Validation")
+    plt.xlabel(r"Arrival rate $\rho_s$ (packets/s)")
+    plt.ylabel("Packet Loss Rate")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(10, 6))
+    for _, label, _ in EXPERIMENTS:
+        rho_axis = np.array([item["rho"] for item in validation_results[label]])
+        throughput_values = np.array([item["throughput"] for item in validation_results[label]])
+        plt.plot(rho_axis, throughput_values, marker="o", linewidth=1.6, label=label)
+    plt.title("Satellite Selection Throughput Validation")
+    plt.xlabel(r"Arrival rate $\rho_s$ (packets/s)")
+    plt.ylabel("Average Throughput (packets/second)")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(10, 6))
+    for _, label, _ in EXPERIMENTS:
+        rho_axis = np.array([item["rho"] for item in validation_results[label]])
+        delay_values = np.array([item["average_delay_ms"] for item in validation_results[label]])
+        plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=label)
+    plt.title("Satellite Selection Average Delay Validation")
+    plt.xlabel(r"Arrival rate $\rho_s$ (packets/s)")
+    plt.ylabel("Average delay (ms)")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- Satellite Selection Validation Complete ---")
+    for _, label, _ in EXPERIMENTS:
+        for item in validation_results[label]:
+            print(
+                f"{label}, rho_s={item['rho']:.4g}: "
+                f"PLR={item['plr']:.4f}, "
+                f"throughput={item['throughput']:.2f}, "
+                f"avg_delay_ms={item['average_delay_ms']:.2f}, "
+                f"final_N={item['final_n_estimate']:.2f}"
+            )
 
 
 if RUN_MODE6_ALPHA_SWEEP:
@@ -79,7 +167,7 @@ if RUN_MODE5_ETA_SWEEP:
     MODE5 = [5, 1]
     MODE3 = [3, 1]
     RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
-    ETA_VALUES = np.array([0.05, 0.1, 0.2, 0.5])
+    ETA_VALUES = np.array([0.1, 0.5, 1, 5, 10])
 
     eta_results = {rho: [] for rho in RHO_VALUES}
     mode3_results = {}

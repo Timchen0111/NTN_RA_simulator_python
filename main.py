@@ -366,9 +366,9 @@ class UE:
 
         if r < self.p_b[remaining_budget - 1]:
             backoff = True
-        if self.selection_mode == 3:
-            # Mode 3 only selects from the UE-visible set; its visibility
-            # threshold is set in update_visibility_batch.
+        if self.selection_mode in (3, 5):
+            # VU samples uniformly from the visible set; Mode 5 applies A_g
+            # after filtering to the same visible set and renormalizing below.
             candidate_satellites = self.visible_satellites
         else:
             candidate_satellites = self.all_satellites if len(self.all_satellites) > 0 else self.visible_satellites
@@ -561,9 +561,9 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.fixed_channel_success_prob = 1.0
         return len(ue_list) * sat_count
 
-    # Mode 3 is defined against the preselection visible-random table, which
-    # uses a 10-degree elevation cutoff. Other modes keep their existing cutoff.
-    visibility_min_elevation = 10 if mode == 3 else min_elevation
+    # VU and Mode 5 use the same 10-degree UE-side visibility filter. Mode 5
+    # still applies its A_g policy later, after filtering and renormalization.
+    visibility_min_elevation = 10 if mode in (3, 5) else min_elevation
 
     for sat in sat_snapshot:
         if sat.id < 0 or sat.id >= sat_count:
@@ -855,6 +855,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     throughput_history = []
     last_real_p_s = None
     ps_history = []
+    p_b_history = []
     for ue in ue_list:
         ue.acb_selection_count = 0
         ue.acb_policy_fallback_count = 0
@@ -946,6 +947,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         if n > 0:
             ctrl.satellite_selection(Lambda=Lambda,MODE=selection_mode, n=n, target_location=geo, t=current_t)
             ctrl.backoff_control(total_load=sum(Lambda), rho=rho_rao, p_d = ue_list[0].QoS_requirement, p_s=p_s, K=ctrl.sat_num, Z=sat_list[0].Z,backoff_mode=backoff_mode,n=n)
+            p_b_history.append(ctrl.p_b.copy())
             current_n_hat = ctrl.N_estimate
         n_history.append(current_n_hat)
         
@@ -1046,6 +1048,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         "average_delay_raos": np.mean(success_delay_raos) if len(success_delay_raos) > 0 else np.nan,
         "reward": np.mean(ctrl.history_reward),
         "ps_history": ps_history,
+        "p_b_history": p_b_history,
         "adaptive_epsilon_history": ctrl.adaptive_epsilon_history,
     }
     return avg_throughput, plr, n_history, ctrl.actual, ctrl.observe_pi, ctrl.history_reward, run_history
