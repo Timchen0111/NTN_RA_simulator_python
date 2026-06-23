@@ -19,10 +19,11 @@ if RUN_ALL:
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
     RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
-        ([1, 1], "Proposed / Proposed"),
-        ([1, 2], "Proposed / DACB"),
-        ([1, 3], "Proposed / SA-ACB"),
+        ([6, 1], "Proposed / Proposed"),
+        ([6, 2], "Proposed / DACB"),
+        ([6, 3], "Proposed / SA-ACB"),
         ([3, 1], "VU / Proposed"),
         ([4, 1], "HE / Proposed"),
         ([5, 1], "LLA / Proposed"),
@@ -196,10 +197,11 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
     RHO = 1.0
+    # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
-        ([1, 1], "Proposed / Proposed"),
-        ([1, 2], "Proposed / DACB"),
-        ([1, 3], "Proposed / SA-ACB"),
+        ([6, 1], "Proposed / Proposed"),
+        ([6, 2], "Proposed / DACB"),
+        ([6, 3], "Proposed / SA-ACB"),
         ([3, 1], "VU / Proposed"),
         ([4, 1], "HE / Proposed"),
         ([5, 1], "LLA / Proposed"),
@@ -271,9 +273,9 @@ if RUN_RHO_SWEEP:
     USE_REAL_PS = False
     RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
     MODES = [
-        ([1, 1], "Proposed"),
-        ([1, 2], "DACB"),
-        ([1, 3], "SA-ACB"),
+        ([6, 1], "Proposed"),
+        ([6, 2], "DACB"),
+        ([6, 3], "SA-ACB"),
     ]
 
     # Backoff settings 2 and 3 are ACB baselines; all other experiment parameters are
