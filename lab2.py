@@ -6,8 +6,8 @@ import main
 
 RUN_MODE6_ALPHA_SWEEP = False
 RUN_MODE5_ETA_SWEEP = False
-RUN_MODE5_POLICY_VARIATION_SINGLE = True
-RUN_SATELLITE_SELECTION_VALIDATION = False
+RUN_MODE5_POLICY_VARIATION_SINGLE = False
+RUN_SATELLITE_SELECTION_VALIDATION = True
 RUN_EPSILON_N_ESTIMATION_SWEEP = False
 
 NUM_UE = 10000
@@ -78,11 +78,11 @@ if RUN_MODE5_POLICY_VARIATION_SINGLE:
 
 
 if RUN_SATELLITE_SELECTION_VALIDATION:
-    RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
     MODE5_ETA_VALUES = np.array([0.2, 1.0, 5.0])
     EXPERIMENTS = [
-        ([3, 1], "VU", {}),
-        ([4, 1], "HE", {}),
+        #([3, 1], "VU", {}),
+        #([4, 1], "HE", {}),
         ([6, 1], "MODE6", {}),
     ]
     EXPERIMENTS.extend(
@@ -181,7 +181,7 @@ if RUN_SATELLITE_SELECTION_VALIDATION:
 
 if RUN_MODE6_ALPHA_SWEEP:
     MODE = [6, 1]
-    LAMBDA_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+    LAMBDA_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
     ALPHA_VALUES = np.array([0.25, 0.5, 1.0, 2.0])
     ADAPTIVE_EPSILON_MIN = 1e-4
     ADAPTIVE_EPSILON_MAX = 1e-2
@@ -242,7 +242,7 @@ if RUN_MODE6_ALPHA_SWEEP:
 if RUN_MODE5_ETA_SWEEP:
     MODE5 = [5, 1]
     MODE3 = [3, 1]
-    RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
     ETA_VALUES = np.array([0.1, 0.5, 1, 5, 10])
 
     eta_results = {rho: [] for rho in RHO_VALUES}

@@ -18,7 +18,7 @@ if RUN_ALL:
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
     MODES = [
         ([1, 1], "Proposed / Proposed"),
         ([1, 2], "Proposed / DACB"),
@@ -110,7 +110,7 @@ if RHO_SWEEP_PB:
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
     MODE = [1, 1]
-    RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
 
     pb_results = []
     for rho in RHO_VALUES:
@@ -269,7 +269,7 @@ if RUN_RHO_SWEEP:
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
     MODES = [
         ([1, 1], "Proposed"),
         ([1, 2], "DACB"),
@@ -355,8 +355,9 @@ if RUN_SATELLITE_SELECTION_SWEEP:
     NUM_UE = 10000
     SECONDS = 10
     SEED = 42
+    IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
 
     def epsilon_plot_label(epsilon):
         exponent = np.log10(epsilon) if epsilon > 0 else np.nan
@@ -373,21 +374,27 @@ if RUN_SATELLITE_SELECTION_SWEEP:
         return f"ε={epsilon:g}"
 
     EXPERIMENTS = [
-        ([1, 1], epsilon_plot_label(1e-4), epsilon_text_label(1e-4), 1e-4),
-        ([1, 1], epsilon_plot_label(1e-3), epsilon_text_label(1e-3), 1e-3),
-        ([1, 1], epsilon_plot_label(1e-2), epsilon_text_label(1e-2), 1e-2),
-        ([1, 1], epsilon_plot_label(1e-1), epsilon_text_label(1e-1), 1e-1),
+        ([3, 1], "VU", {}),
+        ([4, 1], "HE", {}),
+        ([5, 1], "LLA", {}),
         ([6, 1], r"Adaptive $\epsilon^m$", "Adaptive ε^m", 0.1),
+    ]
+
+    EXPERIMENTS = [
+        ([3, 1], "VU", {}),
+        ([4, 1], "HE", {}),
+        ([5, 1], "LLA", {}),
+        ([6, 1], "Proposed", {}),
     ]
 
     # Satellite-selection baselines keep the proposed backoff controller fixed
     # so the PLR curves isolate the satellite selection policy.
-    selection_results = {plot_label: [] for _, plot_label, _, _ in EXPERIMENTS}
-    for mode, plot_label, text_label, epsilon in EXPERIMENTS:
+    selection_results = {label: [] for _, label, _ in EXPERIMENTS}
+    for mode, label, extra_kwargs in EXPERIMENTS:
         for rho in RHO_VALUES:
             print(
                 f"\nRunning satellite selection arrival-rate sweep: "
-                f"{text_label}, arrival rate={rho}"
+                f"{label}, arrival rate={rho}"
             )
             avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
                 rho,
@@ -395,14 +402,13 @@ if RUN_SATELLITE_SELECTION_SWEEP:
                 NUM_UE,
                 mode,
                 SEED,
-                epsilon,
+                IMBALANCE_EPSILON,
                 USE_REAL_PS=USE_REAL_PS,
+                **extra_kwargs,
             )
             final_n_estimate = n_history[-1] if len(n_history) > 0 else np.nan
-            selection_results[plot_label].append({
+            selection_results[label].append({
                 "rho": rho,
-                "epsilon": epsilon,
-                "text_label": text_label,
                 "plr": plr,
                 "throughput": avg_throughput,
                 "average_delay_ms": run_history.get("average_delay_ms", np.nan),
@@ -410,10 +416,10 @@ if RUN_SATELLITE_SELECTION_SWEEP:
             })
 
     plt.figure(figsize=(10, 6))
-    for _, plot_label, _, _ in EXPERIMENTS:
-        rho_axis = np.array([item["rho"] for item in selection_results[plot_label]])
-        plr_values = np.array([item["plr"] for item in selection_results[plot_label]])
-        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=plot_label)
+    for _, label, _ in EXPERIMENTS:
+        rho_axis = np.array([item["rho"] for item in selection_results[label]])
+        plr_values = np.array([item["plr"] for item in selection_results[label]])
+        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=label)
     plt.title("Satellite Selection PLR Comparison under Different Arrival Rates")
     plt.xlabel("Arrival rate (packets/s)")
     plt.ylabel("Packet Loss Rate")
@@ -423,10 +429,10 @@ if RUN_SATELLITE_SELECTION_SWEEP:
     plt.show()
 
     plt.figure(figsize=(10, 6))
-    for _, plot_label, _, _ in EXPERIMENTS:
-        rho_axis = np.array([item["rho"] for item in selection_results[plot_label]])
-        throughput_values = np.array([item["throughput"] for item in selection_results[plot_label]])
-        plt.plot(rho_axis, throughput_values, marker="o", linewidth=1.6, label=plot_label)
+    for _, label, _ in EXPERIMENTS:
+        rho_axis = np.array([item["rho"] for item in selection_results[label]])
+        throughput_values = np.array([item["throughput"] for item in selection_results[label]])
+        plt.plot(rho_axis, throughput_values, marker="o", linewidth=1.6, label=label)
     plt.title("Satellite Selection Throughput Comparison under Different Arrival Rates")
     plt.xlabel("Arrival rate (packets/s)")
     plt.ylabel("Average Throughput (packets/second)")
@@ -436,10 +442,10 @@ if RUN_SATELLITE_SELECTION_SWEEP:
     plt.show()
 
     plt.figure(figsize=(10, 6))
-    for _, plot_label, _, _ in EXPERIMENTS:
-        rho_axis = np.array([item["rho"] for item in selection_results[plot_label]])
-        delay_values = np.array([item["average_delay_ms"] for item in selection_results[plot_label]])
-        plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=plot_label)
+    for _, label, _ in EXPERIMENTS:
+        rho_axis = np.array([item["rho"] for item in selection_results[label]])
+        delay_values = np.array([item["average_delay_ms"] for item in selection_results[label]])
+        plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=label)
     plt.title("Satellite Selection AverageDelay Comparison under Different Arrival Rates")
     plt.xlabel("Arrival rate (packets/s)")
     plt.ylabel("AverageDelay (ms)")
@@ -449,10 +455,10 @@ if RUN_SATELLITE_SELECTION_SWEEP:
     plt.show()
 
     print("\n--- Satellite Selection Lambda Sweep Complete ---")
-    for _, plot_label, _, _ in EXPERIMENTS:
-        for item in selection_results[plot_label]:
+    for _, label, _ in EXPERIMENTS:
+        for item in selection_results[label]:
             print(
-                f"{item['text_label']}, arrival rate={item['rho']:.4f}: "
+                f"{label}, arrival rate={item['rho']:.4f}: "
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
                 f"avg_delay_ms={item['average_delay_ms']:.2f}, "
@@ -468,7 +474,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
     IMBALANCE_EPSILON = 0.01
     USE_REAL_PS = False
     ADAPTIVE_EPSILON_ALPHA = 2.0
-    RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
 
     validation_results = []
     for rho in RHO_VALUES:
@@ -611,7 +617,7 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
     ADAPTIVE_EPSILON_MODE = [6, 1]
     FIXED_EPSILON_RHO = 1.0
     FIXED_EPSILON_VALUES = [1e-4, 1e-3, 1e-2, 1e-1]
-    ADAPTIVE_EPSILON_RHO_VALUES = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+    ADAPTIVE_EPSILON_RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
     ADAPTIVE_EPSILON_ALPHA = 2.0
 
     fixed_epsilon_results = []
