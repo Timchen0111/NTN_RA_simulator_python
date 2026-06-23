@@ -26,8 +26,12 @@ class controller:
         self.selection_solver_failures = 0
         self.last_load_indicator = None
         self.load_aware_eta = 1.0
+        self.load_aware_load_ema = None
+        self.load_aware_load_ema_history = []
         self.adaptive_epsilon_load_ema = 0.0
         self.adaptive_epsilon_history = []
+        self.previous_A_by_group = None
+        self.selection_policy_variation_history = []
     def set_group_probabilities_for_rao(self, n, selection_mode, use_convex_solver=False, imbalance_epsilon=0.01, preamble_count=None):
         if self.group_weight_table is None:
             self.A_by_group = {}
@@ -127,6 +131,84 @@ class controller:
                 raise ValueError("Cannot build A_g before satellites are registered.")
             current_probabilities[group_key] = np.ones(self.sat_num) / self.sat_num
         self.A_by_group = current_probabilities
+
+    def record_selection_policy_variation(self, n, selection_mode):
+        # Diagnostic only: measure how much the broadcast group selection
+        # probabilities A_g change between consecutive RAOs.
+        current_policy = {
+            tuple(group): np.asarray(probabilities, dtype=float).copy()
+            for group, probabilities in self.A_by_group.items()
+        }
+
+        if selection_mode == 3:
+            self.selection_policy_variation_history.append({
+                "time_slot": n,
+                "mean_tv": np.nan,
+                "weighted_tv": np.nan,
+                "max_tv": np.nan,
+                "common_group_count": 0,
+            })
+            self.previous_A_by_group = current_policy
+            return
+
+        if self.previous_A_by_group is None:
+            self.selection_policy_variation_history.append({
+                "time_slot": n,
+                "mean_tv": np.nan,
+                "weighted_tv": np.nan,
+                "max_tv": np.nan,
+                "common_group_count": 0,
+            })
+            self.previous_A_by_group = current_policy
+            return
+
+        common_groups = set(current_policy).intersection(self.previous_A_by_group)
+        if not common_groups:
+            self.selection_policy_variation_history.append({
+                "time_slot": n,
+                "mean_tv": np.nan,
+                "weighted_tv": np.nan,
+                "max_tv": np.nan,
+                "common_group_count": 0,
+            })
+            self.previous_A_by_group = current_policy
+            return
+
+        weights = self.group_weight_table[n] if self.group_weight_table is not None else {}
+        tv_values = []
+        weight_values = []
+        for group in common_groups:
+            current = current_policy[group]
+            previous = self.previous_A_by_group[group]
+            if len(current) != len(previous):
+                continue
+            tv = 0.5 * np.sum(np.abs(current - previous))
+            tv_values.append(tv)
+            weight_values.append(float(weights.get(group, 0.0)))
+
+        if len(tv_values) == 0:
+            mean_tv = np.nan
+            weighted_tv = np.nan
+            max_tv = np.nan
+        else:
+            tv_values = np.asarray(tv_values, dtype=float)
+            weight_values = np.asarray(weight_values, dtype=float)
+            mean_tv = float(np.mean(tv_values))
+            max_tv = float(np.max(tv_values))
+            if np.sum(weight_values) > 0:
+                weighted_tv = float(np.average(tv_values, weights=weight_values))
+            else:
+                weighted_tv = mean_tv
+
+        self.selection_policy_variation_history.append({
+            "time_slot": n,
+            "mean_tv": mean_tv,
+            "weighted_tv": weighted_tv,
+            "max_tv": max_tv,
+            "common_group_count": len(tv_values),
+        })
+        self.previous_A_by_group = current_policy
+
     def set_agent(self):
         self.last_state = None
         self.last_action_idx = None
@@ -174,6 +256,29 @@ class controller:
     def reset_agent(self):
         self.last_state = None
         self.last_action_idx = None
+
+    def update_load_aware_load_indicator(self, load, beta):
+        # Mode 5 uses the same EMA idea as the adaptive proposed method, but
+        # applies it per satellite so the load penalty does not overreact.
+        beta = np.clip(beta, 0.0, 1.0)
+        load = np.maximum(np.asarray(load, dtype=float), 0.0)
+        if len(load) != self.sat_num:
+            raise ValueError(
+                f"Mode 5 EMA load length {len(load)} does not match sat_num {self.sat_num}."
+            )
+        if self.load_aware_load_ema is None:
+            self.load_aware_load_ema = np.zeros(self.sat_num, dtype=float)
+        self.load_aware_load_ema = (
+            (1.0 - beta) * self.load_aware_load_ema
+            + beta * load
+        )
+        self.last_load_indicator = self.load_aware_load_ema.copy()
+        self.load_aware_load_ema_history.append({
+            "load_ema": self.load_aware_load_ema.copy(),
+            "load_raw": load.copy(),
+            "beta": float(beta),
+        })
+        return self.last_load_indicator
 
     def adaptive_imbalance_epsilon(self, total_load, total_preambles, epsilon_min, epsilon_max, alpha, beta):
         # Mode 6: adapt the convex load-balance tolerance from a smoothed
@@ -736,7 +841,7 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
         print(f"VU ps table shape: {mode3_visible_random_ps_table.shape}")
     return group_weight_table, group_ps_table, mode3_visible_random_ps_table
 
-def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=1.0, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=2.0, ADAPTIVE_EPSILON_BETA=0.2, QOS_DISTRIBUTION=None):
+def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=1.0, LOAD_AWARE_LOAD_EMA_BETA=0.2, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=2.0, ADAPTIVE_EPSILON_BETA=0.2, QOS_DISTRIBUTION=None):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
     if MODE == 0:
@@ -757,6 +862,8 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         print(f"Satellite selection imbalance epsilon: {IMBALANCE_EPSILON}")
     print(f"Use lagged real p_s: {USE_REAL_PS}")
     print(f"Load-aware eta: {LOAD_AWARE_ETA}")
+    if selection_mode == 5:
+        print(f"Mode 5 load EMA beta: {LOAD_AWARE_LOAD_EMA_BETA}")
     # Optional QoS sweep hook: keep the legacy uniform distribution when no
     # experiment-specific delay budget distribution is provided.
     if QOS_DISTRIBUTION is None:
@@ -903,9 +1010,12 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         else:
             Lambda = ctrl.load_estimator(expected_tables) #每個RAO都呼叫一次load estimator，並且傳入預計算好的期望值表
             current_n_hat = ctrl.N_estimate
-        # Mode 5 uses the latest available previous-RAO load report before
-        # making the current RAO's satellite selection decision.
-        ctrl.last_load_indicator = Lambda.copy()
+        # Mode 5 smooths the latest available load report before making the
+        # current RAO's load-and-link-aware satellite selection decision.
+        if selection_mode == 5:
+            ctrl.update_load_aware_load_indicator(Lambda, LOAD_AWARE_LOAD_EMA_BETA)
+        else:
+            ctrl.last_load_indicator = Lambda.copy()
         effective_imbalance_epsilon = IMBALANCE_EPSILON
         if selection_mode == 6:
             # Mode 6 keeps the proposed convex selection, but tightens epsilon
@@ -928,6 +1038,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
             imbalance_epsilon=effective_imbalance_epsilon,
             preamble_count=sat_list[0].Z,
         )
+        ctrl.record_selection_policy_variation(n, selection_mode)
         # Compute the precomputed p_s from the group selection policy; optionally replace it with lagged real p_s for control.
         if selection_mode == 2:
             precomputed_p_s = 1.0
@@ -1029,6 +1140,13 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     policy_fallback_count = sum(ue.acb_policy_fallback_count for ue in ue_list)
     acb_selection_count = sum(ue.acb_selection_count for ue in ue_list)
     policy_fallback_rate = policy_fallback_count / acb_selection_count if acb_selection_count > 0 else 0.0
+    policy_variation_values = np.array(
+        [item["weighted_tv"] for item in ctrl.selection_policy_variation_history],
+        dtype=float,
+    )
+    finite_policy_variation = policy_variation_values[np.isfinite(policy_variation_values)]
+    selection_policy_variation_mean = float(np.mean(finite_policy_variation)) if len(finite_policy_variation) > 0 else np.nan
+    selection_policy_variation_max = float(np.max(finite_policy_variation)) if len(finite_policy_variation) > 0 else np.nan
     avg_throughput = total_success_packets / (RAO_COUNTS * trao / 1000)  # packets per second
     plr = 1 - total_success_packets/(total_success_packets+total_lost_packets)
     print(f"----------Simulation Complete.----------")
@@ -1039,6 +1157,13 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     print(f"AverageDelay (ms): {avg_delay_ms:.2f}" if np.isfinite(avg_delay_ms) else "AverageDelay (ms): N/A")
     print(f"Channel Failure Rate: {channel_failure_rates:.4f}")
     print(f"ACB Policy Fallback Frequency: {policy_fallback_count}/{acb_selection_count} ({policy_fallback_rate:.4f})")
+    if np.isfinite(selection_policy_variation_mean):
+        print(
+            f"A_g Policy Variation: mean={selection_policy_variation_mean:.4f}, "
+            f"max={selection_policy_variation_max:.4f}"
+        )
+    else:
+        print("A_g Policy Variation: N/A")
 
     run_history = {
         "throughput": avg_throughput,
@@ -1050,6 +1175,10 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         "ps_history": ps_history,
         "p_b_history": p_b_history,
         "adaptive_epsilon_history": ctrl.adaptive_epsilon_history,
+        "load_aware_load_ema_history": ctrl.load_aware_load_ema_history,
+        "selection_policy_variation_history": ctrl.selection_policy_variation_history,
+        "selection_policy_variation_mean": selection_policy_variation_mean,
+        "selection_policy_variation_max": selection_policy_variation_max,
     }
     return avg_throughput, plr, n_history, ctrl.actual, ctrl.observe_pi, ctrl.history_reward, run_history
 

@@ -6,7 +6,8 @@ import main
 
 RUN_MODE6_ALPHA_SWEEP = False
 RUN_MODE5_ETA_SWEEP = False
-RUN_SATELLITE_SELECTION_VALIDATION = True
+RUN_MODE5_POLICY_VARIATION_SINGLE = True
+RUN_SATELLITE_SELECTION_VALIDATION = False
 RUN_EPSILON_N_ESTIMATION_SWEEP = False
 
 NUM_UE = 10000
@@ -14,6 +15,66 @@ SECONDS = 5
 SEED = 42
 USE_REAL_PS = False
 IMBALANCE_EPSILON = 0.01
+
+
+if RUN_MODE5_POLICY_VARIATION_SINGLE:
+    MODE = [5, 1]
+    RHO = 1.5
+    LOAD_AWARE_ETA = 1.0
+    LOAD_AWARE_LOAD_EMA_BETA = 0.2
+    SECONDS_SINGLE = 180
+
+    print(
+        f"\nRunning MODE5 selection probability variation test: "
+        f"rho_s={RHO}, eta={LOAD_AWARE_ETA}, load_ema_beta={LOAD_AWARE_LOAD_EMA_BETA}"
+    )
+    avg_throughput, plr, n_history, actual_pi, observe_pi, reward_history, run_history = main.main(
+        RHO,
+        SECONDS_SINGLE,
+        NUM_UE,
+        MODE,
+        SEED,
+        IMBALANCE_EPSILON=IMBALANCE_EPSILON,
+        USE_REAL_PS=USE_REAL_PS,
+        LOAD_AWARE_ETA=LOAD_AWARE_ETA,
+        LOAD_AWARE_LOAD_EMA_BETA=LOAD_AWARE_LOAD_EMA_BETA,
+    )
+
+    policy_history = run_history.get("selection_policy_variation_history", [])
+    time_slots = np.array([item["time_slot"] for item in policy_history], dtype=float)
+    weighted_tv = np.array([item["weighted_tv"] for item in policy_history], dtype=float)
+    mean_tv = np.array([item["mean_tv"] for item in policy_history], dtype=float)
+    max_tv = np.array([item["max_tv"] for item in policy_history], dtype=float)
+
+    finite_mask = np.isfinite(weighted_tv)
+    plt.figure(figsize=(10, 6))
+    plt.plot(time_slots[finite_mask], weighted_tv[finite_mask], linewidth=1.4, label="Weighted average variation")
+    plt.plot(time_slots[np.isfinite(mean_tv)], mean_tv[np.isfinite(mean_tv)], linewidth=1.1, alpha=0.8, label="Unweighted average variation")
+    plt.plot(time_slots[np.isfinite(max_tv)], max_tv[np.isfinite(max_tv)], linewidth=1.1, alpha=0.8, label="Maximum group variation")
+    plt.title("MODE5 Selection Probability Variation over Time")
+    plt.xlabel("Time Slot (n)")
+    plt.ylabel("Total variation distance of A_g")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    common_group_counts = np.array([item["common_group_count"] for item in policy_history], dtype=float)
+    plt.figure(figsize=(10, 6))
+    plt.plot(time_slots, common_group_counts, linewidth=1.3, color="#7f8c8d")
+    plt.title("Common Groups Used in MODE5 Probability Variation")
+    plt.xlabel("Time Slot (n)")
+    plt.ylabel("Number of common groups")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- MODE5 Selection Probability Variation Test Complete ---")
+    print(f"PLR={plr:.4f}")
+    print(f"throughput={avg_throughput:.2f}")
+    print(f"average_delay_ms={run_history.get('average_delay_ms', np.nan):.2f}")
+    print(f"mean_weighted_variation={run_history.get('selection_policy_variation_mean', np.nan):.6f}")
+    print(f"max_weighted_variation={run_history.get('selection_policy_variation_max', np.nan):.6f}")
 
 
 if RUN_SATELLITE_SELECTION_VALIDATION:
@@ -49,6 +110,7 @@ if RUN_SATELLITE_SELECTION_VALIDATION:
                 "plr": plr,
                 "throughput": avg_throughput,
                 "average_delay_ms": run_history.get("average_delay_ms", np.nan),
+                "selection_policy_variation_mean": run_history.get("selection_policy_variation_mean", np.nan),
                 "final_n_estimate": final_n_estimate,
             })
 
@@ -91,6 +153,19 @@ if RUN_SATELLITE_SELECTION_VALIDATION:
     plt.tight_layout()
     plt.show()
 
+    plt.figure(figsize=(10, 6))
+    for _, label, _ in EXPERIMENTS:
+        rho_axis = np.array([item["rho"] for item in validation_results[label]])
+        variation_values = np.array([item["selection_policy_variation_mean"] for item in validation_results[label]])
+        plt.plot(rho_axis, variation_values, marker="o", linewidth=1.6, label=label)
+    plt.title("Satellite Selection Probability Variation Validation")
+    plt.xlabel(r"Arrival rate $\rho_s$ (packets/s)")
+    plt.ylabel("Mean total variation distance of A_g")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
     print("\n--- Satellite Selection Validation Complete ---")
     for _, label, _ in EXPERIMENTS:
         for item in validation_results[label]:
@@ -99,6 +174,7 @@ if RUN_SATELLITE_SELECTION_VALIDATION:
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
                 f"avg_delay_ms={item['average_delay_ms']:.2f}, "
+                f"policy_variation={item['selection_policy_variation_mean']:.4f}, "
                 f"final_N={item['final_n_estimate']:.2f}"
             )
 
