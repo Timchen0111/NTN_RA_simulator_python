@@ -25,6 +25,7 @@ if RUN_ALL:
         ([1, 3], "Proposed / SA-ACB"),
         ([3, 1], "VU / Proposed"),
         ([4, 1], "HE / Proposed"),
+        ([5, 1], "LLA / Proposed"),
     ]
 
     # Backoff settings 2 and 3 are ACB baselines; all other experiment parameters are
@@ -201,6 +202,7 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
         ([1, 3], "Proposed / SA-ACB"),
         ([3, 1], "VU / Proposed"),
         ([4, 1], "HE / Proposed"),
+        ([5, 1], "LLA / Proposed"),
     ]
     QOS_DISTRIBUTIONS = [
         ("Q1\n[0.2,0.2,0.2,0.2,0.2]", np.array([0.2, 0.2, 0.2, 0.2, 0.2])),
