@@ -8,6 +8,7 @@ RUN_QOS_DISTRIBUTION_COMPARISON = False
 RUN_RHO_SWEEP = False
 RHO_SWEEP_PB = True
 RUN_SATELLITE_SELECTION_SWEEP = False
+RUN_FIXED_LOAD_IMBALANCE_SWEEP = False
 RUN_SATELLITE_SELECTION_PERFORMANCE = False #Different epsilon values
 RUN_ESTIMATION_VALIDATION_RHO_SWEEP = False
 epsilon_sweep = False
@@ -353,6 +354,86 @@ if RUN_RHO_SWEEP:
             )
     raise SystemExit
 
+if RUN_FIXED_LOAD_IMBALANCE_SWEEP:
+    NUM_UE = 10000
+    SECONDS = 10
+    SEED = 42
+    USE_REAL_PS = False
+    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+
+    def epsilon_plot_label(epsilon):
+        exponent = np.log10(epsilon) if epsilon > 0 else np.nan
+        rounded_exponent = int(np.round(exponent)) if np.isfinite(exponent) else None
+        if rounded_exponent is not None and np.isclose(epsilon, 10.0 ** rounded_exponent):
+            return rf"$\epsilon=10^{{{rounded_exponent}}}$"
+        return rf"$\epsilon={epsilon:g}$"
+
+    def epsilon_text_label(epsilon):
+        exponent = np.log10(epsilon) if epsilon > 0 else np.nan
+        rounded_exponent = int(np.round(exponent)) if np.isfinite(exponent) else None
+        if rounded_exponent is not None and np.isclose(epsilon, 10.0 ** rounded_exponent):
+            return f"\u03b5=10^{rounded_exponent}"
+        return f"\u03b5={epsilon:g}"
+
+    EXPERIMENTS = [
+        ([1, 1], epsilon_plot_label(1e-4), epsilon_text_label(1e-4), 1e-4),
+        ([1, 1], epsilon_plot_label(1e-3), epsilon_text_label(1e-3), 1e-3),
+        ([1, 1], epsilon_plot_label(1e-2), epsilon_text_label(1e-2), 1e-2),
+        ([1, 1], epsilon_plot_label(1e-1), epsilon_text_label(1e-1), 1e-1),
+        ([6, 1], r"Adaptive $\epsilon^m$", "Adaptive \u03b5^m", 0.1),
+    ]
+
+    constraint_results = {plot_label: [] for _, plot_label, _, _ in EXPERIMENTS}
+    for mode, plot_label, text_label, epsilon in EXPERIMENTS:
+        for rho in RHO_VALUES:
+            print(
+                f"\nRunning load-imbalance constraint sweep: "
+                f"{text_label}, arrival rate={rho}"
+            )
+            avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
+                rho,
+                SECONDS,
+                NUM_UE,
+                mode,
+                SEED,
+                epsilon,
+                USE_REAL_PS=USE_REAL_PS,
+            )
+            constraint_results[plot_label].append({
+                "rho": rho,
+                "text_label": text_label,
+                "epsilon": epsilon,
+                "plr": plr,
+                "throughput": avg_throughput,
+                "average_delay_ms": run_history.get("average_delay_ms", np.nan),
+                "final_n_estimate": n_history[-1] if len(n_history) > 0 else np.nan,
+            })
+
+    plt.figure(figsize=(10, 6))
+    for _, plot_label, _, _ in EXPERIMENTS:
+        rho_axis = np.array([item["rho"] for item in constraint_results[plot_label]])
+        plr_values = np.array([item["plr"] for item in constraint_results[plot_label]])
+        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=plot_label)
+    plt.title("PLR under Fixed and Adaptive Load-Imbalance Constraints")
+    plt.xlabel("Arrival rate (packets/s)")
+    plt.ylabel("Packet Loss Rate")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- Fixed Load-Imbalance Constraint Sweep Complete ---")
+    for _, plot_label, _, _ in EXPERIMENTS:
+        for item in constraint_results[plot_label]:
+            print(
+                f"{item['text_label']}, arrival rate={item['rho']:.4f}: "
+                f"PLR={item['plr']:.4f}, "
+                f"throughput={item['throughput']:.2f}, "
+                f"avg_delay_ms={item['average_delay_ms']:.2f}, "
+                f"final_N={item['final_n_estimate']:.2f}"
+            )
+    raise SystemExit
+
 if RUN_SATELLITE_SELECTION_SWEEP:
     NUM_UE = 10000
     SECONDS = 10
@@ -470,7 +551,7 @@ if RUN_SATELLITE_SELECTION_SWEEP:
 
 if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
     NUM_UE = 10000
-    SECONDS = 1
+    SECONDS = 180
     SEED = 42
     MODE = [6, 1]
     IMBALANCE_EPSILON = 0.01
@@ -809,7 +890,7 @@ USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(1.0, 1, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(1.2, 180, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
 load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {
