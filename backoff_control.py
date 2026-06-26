@@ -91,7 +91,7 @@ def priority_acb_backoff(lambda_by_state, total_preambles):
     return np.clip(1.0 - access_by_state, 0.0, 1.0)
 
 
-def backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z, backoff_mode, Lambda):
+def backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z, backoff_mode, Lambda, state_ratio=None):
     if backoff_mode == 1:
         return proposed_backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z)
 
@@ -99,7 +99,7 @@ def backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z, backoff_mode, Lam
         return dynamic_acb_backoff(N_tilde, rho, D, p_d, p_s, K, Z)
 
     if backoff_mode == 3:
-        return priority_acb_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z)
+        return priority_acb_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z, Lambda, state_ratio)
 
     raise ValueError(f"Unsupported backoff mode: {backoff_mode}")
 
@@ -137,10 +137,16 @@ def dynamic_acb_backoff(N_tilde, rho, D, p_d, p_s, K, Z):
     return backoff, opt_pi
 
 
-def priority_acb_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z):
+def priority_acb_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z, Lambda, state_ratio=None):
     env = SatelliteEnv(N_tilde, rho)
-    _, _, pi_from_previous_policy = env.solve_p_c(last_p_b, D, p_d, p_s, K, Z)
-    lambda_by_state = N_tilde * pi_from_previous_policy
+    if state_ratio is None:
+        _, _, state_ratio = env.solve_p_c(last_p_b, D, p_d, p_s, K, Z)
+        lambda_by_state = N_tilde * state_ratio
+    else:
+        state_ratio = np.asarray(state_ratio, dtype=float)
+        if len(state_ratio) != D or not np.all(np.isfinite(state_ratio)):
+            state_ratio = np.ones(D, dtype=float) / D
+        lambda_by_state = max(float(Lambda), 0.0) * state_ratio
     backoff = priority_acb_backoff(lambda_by_state, K * Z)
     _, _, opt_pi = env.solve_p_c(backoff, D, p_d, p_s, K, Z)
     return backoff, opt_pi

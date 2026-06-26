@@ -14,6 +14,7 @@ class controller:
         self.Dmax = 5 #Delay budget的最大值
         self.p_b = np.zeros(self.Dmax)
         self.observe_pi = np.ones(self.Dmax) / self.Dmax
+        self.success_state_ratio = np.ones(self.Dmax) / self.Dmax
         self.group_weight_table = group_weight_table
         self.group_ps_table = group_ps_table
         self.A_by_group = {}
@@ -189,12 +190,21 @@ class controller:
         N_tilde = self.N_estimation(Lambda=total_load, denominator=denominator)
         self.N_estimate = N_tilde
         #N_tilde = 10000 #丟真值測試用
-        self.p_b, self.observe_pi = backoff_control.backoff_control(N_tilde, self.p_b, rho, self.Dmax, p_d, p_s, K, Z, backoff_mode, total_load)
+        self.p_b, self.observe_pi = backoff_control.backoff_control(N_tilde, self.p_b, rho, self.Dmax, p_d, p_s, K, Z, backoff_mode, total_load, self.success_state_ratio)
         if n % 10 == 0:
             #print(f"Actual Pi: {self.actualPi}, Observed Pi: {self.observe_pi}")
             self.actual.append(list(self.actualPi))
         #print(f"Backoff control updated: p_b={self.p_b}, pi={self.observe_pi}")
         return
+    def update_success_state_ratio(self, success_states):
+        counts = np.zeros(self.Dmax)
+        for state in success_states:
+            if state is not None and 1 <= state <= self.Dmax:
+                counts[int(state) - 1] += 1
+        total = np.sum(counts)
+        if total > 0:
+            self.success_state_ratio = counts / total
+        return self.success_state_ratio
     def satellite_selection(self, Lambda,MODE,n,target_location,t):
         avg_load = np.mean(Lambda)
         reward = -np.mean((Lambda - avg_load) ** 2)
@@ -266,7 +276,7 @@ class satellite:
         self.actual_lambda = 0 # 真實附載 (UE數量)，供測試參考
     def assign_id(self, new_id):
         self.id = new_id
-    def receive_preamble(self,ue_id,angle, distance, fixed_channel_success_prob=None):
+    def receive_preamble(self,ue_id,angle, distance, remaining_budget=None, fixed_channel_success_prob=None):
         # 模擬 UE隨機選取一個 Preamble (0 到 Z-1)
         if fixed_channel_success_prob is None:
             channel_success = channel_calculator(angle, distance)
@@ -275,7 +285,7 @@ class satellite:
 
         if channel_success:
             chosen_preamble = np.random.randint(0, self.Z)
-            self.ue_pre[ue_id] = chosen_preamble
+            self.ue_pre[ue_id] = (chosen_preamble, remaining_budget)
             return True
         else:
             return False #模擬傳輸失敗，UE不會被記錄在ue_pre裡面，controller也不會收到這個UE的任何回報，這相當於UE根本沒有嘗試接入一樣
@@ -289,13 +299,15 @@ class satellite:
         duplicates = set()
         success_list = []
         for value in self.ue_pre.values():
-            if value in seen_values:
-                duplicates.add(value)
+            preamble = value[0]
+            if preamble in seen_values:
+                duplicates.add(preamble)
             else:
-                seen_values.add(value)
-        for ue in self.ue_pre.keys():
-            if self.ue_pre[ue] not in duplicates:
-                success_list.append(ue)
+                seen_values.add(preamble)
+        for ue, value in self.ue_pre.items():
+            preamble, remaining_budget = value
+            if preamble not in duplicates:
+                success_list.append((ue, remaining_budget))
         self.actual_lambda = len(self.ue_pre) #記錄真實附載供測試參考
         self.ue_pre.clear()
         self.N_s = len(success_list)
@@ -500,6 +512,7 @@ class UE:
             self.id,
             self.angle[target_sat.id],
             self.distance[target_sat.id],
+            remaining_budget=self.budget - self.delay,
             fixed_channel_success_prob=self.fixed_channel_success_prob,
         )
         if r:
@@ -1106,10 +1119,13 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
             print(f"Slot {n}/{RAO_COUNTS} | Active: {active_count:3d} | AvgVisSat: {avg_vis_sats:.1f}", end='\r')
         # --- 衛星端處理 (碰撞檢測) ---
         total_success_ids_in_this_slot = []
+        success_states_in_this_slot = []
         for sat in sat_list:
             # 回傳該衛星成功接收的 UE ID 列表
             successes = sat.check_RA_success()
-            total_success_ids_in_this_slot.extend(successes)
+            for ue_id, remaining_budget in successes:
+                total_success_ids_in_this_slot.append(ue_id)
+                success_states_in_this_slot.append(remaining_budget)
 
         # 記錄本時間點的總吞吐量
         throughput_history.append(len(total_success_ids_in_this_slot))
@@ -1118,6 +1134,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         for ue in ue_list:
             if ue.active: #只有active的UE才會收到反饋，並且可能改變狀態
                 ue.receive_feedback(total_success_ids_in_this_slot)
+        ctrl.update_success_state_ratio(success_states_in_this_slot)
     # 統計結果
     total_success_packets = sum(throughput_history)
     total_lost_packets = sum(ue.loss for ue in ue_list)

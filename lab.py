@@ -902,7 +902,7 @@ if epsilon_sweep:
 
 # Current single-run experiment.
 num = 10000
-m = [5, 1] #Satellite selection mode and backoff control mode. 
+m = [5, 3] #Satellite selection mode and backoff control mode. 
 USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
