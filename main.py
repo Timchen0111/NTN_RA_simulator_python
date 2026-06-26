@@ -33,6 +33,9 @@ class controller:
         self.previous_A_by_group = None
         self.selection_policy_variation_history = []
     def set_group_probabilities_for_rao(self, n, selection_mode, use_convex_solver=False, imbalance_epsilon=0.01, preamble_count=None):
+        if selection_mode == 5:
+            self.A_by_group = {}
+            return
         if self.group_weight_table is None:
             self.A_by_group = {}
             return
@@ -55,56 +58,6 @@ class controller:
                 a_g = np.zeros(self.sat_num)
                 a_g[top_satellite] = 1.0
                 current_probabilities[group_key] = a_g
-            self.A_by_group = current_probabilities
-            return
-        if selection_mode == 5:
-            # Mode 5 baseline: group-wise load-and-link-aware selection.
-            # It uses the latest stored estimated satellite load as the
-            # broadcast load indicator, normalized by the preamble count.
-            if ps_by_group is None:
-                raise ValueError("Mode 5 requires group_ps_table.")
-            load_indicator = (
-                np.zeros(self.sat_num)
-                if self.last_load_indicator is None
-                else np.asarray(self.last_load_indicator, dtype=float)
-            )
-            if len(load_indicator) != self.sat_num:
-                raise ValueError(
-                    f"Mode 5 load indicator length {len(load_indicator)} "
-                    f"does not match sat_num {self.sat_num}."
-                )
-            load_scale = float(preamble_count) if preamble_count is not None else 1.0
-            if load_scale <= 0:
-                raise ValueError("Mode 5 preamble_count must be positive.")
-            normalized_load = np.maximum(load_indicator, 0.0) / load_scale
-            load_penalty = np.exp(-self.load_aware_eta * normalized_load)
-
-            current_probabilities = {}
-            for group in weights.keys():
-                group_key = tuple(group)
-                ps_g = np.asarray(ps_by_group[group_key], dtype=float)
-                if len(ps_g) != self.sat_num:
-                    raise ValueError(
-                        f"Mode 5 p_s vector length {len(ps_g)} does not match "
-                        f"sat_num {self.sat_num} for group {group_key}."
-                    )
-                selectable = np.isfinite(ps_g) & (ps_g > 0)
-                utility = np.zeros(self.sat_num)
-                utility[selectable] = ps_g[selectable] * load_penalty[selectable]
-                utility_sum = np.sum(utility)
-                if utility_sum > 0 and np.isfinite(utility_sum):
-                    current_probabilities[group_key] = utility / utility_sum
-                else:
-                    # Degenerate fallback: if all utilities vanish, choose the
-                    # satellite with the best precomputed link probability.
-                    finite_ps = np.where(np.isfinite(ps_g), ps_g, -np.inf)
-                    best_satellite = int(np.argmax(finite_ps))
-                    a_g = np.zeros(self.sat_num)
-                    if finite_ps[best_satellite] > -np.inf:
-                        a_g[best_satellite] = 1.0
-                    else:
-                        a_g[:] = 1.0 / self.sat_num
-                    current_probabilities[group_key] = a_g
             self.A_by_group = current_probabilities
             return
         if use_convex_solver and ps_by_group is not None:
@@ -140,7 +93,7 @@ class controller:
             for group, probabilities in self.A_by_group.items()
         }
 
-        if selection_mode == 3:
+        if selection_mode in (3, 5):
             self.selection_policy_variation_history.append({
                 "time_slot": n,
                 "mean_tv": np.nan,
@@ -377,6 +330,8 @@ class UE:
         self.A_g = None
         self.selection_mode = None
         self.fixed_channel_success_prob = None
+        self.load_indicator = None
+        self.load_aware_eta = 1.0
         self.acb_selection_count = 0
         self.acb_policy_fallback_count = 0
         self.geo = wgs84.latlon(self.location[0], self.location[1])
@@ -446,6 +401,11 @@ class UE:
         #取得系統資訊，包含backoff機率和衛星選擇資訊
         #print(f"UE {self.id}, group {self.group}")
         self.p_b = ctrl.p_b
+        if self.selection_mode == 5:
+            self.load_indicator = ctrl.last_load_indicator
+            self.load_aware_eta = ctrl.load_aware_eta
+            self.A_g = None
+            return
         if self.group is None:
             self.A_g = None
             return
@@ -472,8 +432,7 @@ class UE:
         if r < self.p_b[remaining_budget - 1]:
             backoff = True
         if self.selection_mode in (3, 5):
-            # VU samples uniformly from the visible set; Mode 5 applies A_g
-            # after filtering to the same visible set and renormalizing below.
+            # VU and Mode 5 select only from the UE-side visible set.
             candidate_satellites = self.visible_satellites
         else:
             candidate_satellites = self.all_satellites if len(self.all_satellites) > 0 else self.visible_satellites
@@ -481,6 +440,30 @@ class UE:
             self.acb_selection_count += 1
             if self.selection_mode == 3:
                 target_sat = np.random.choice(candidate_satellites)
+                self.execute_RA(target_sat)
+                return
+            if self.selection_mode == 5:
+                load_indicator = self.load_indicator
+                candidate_ids = [sat.id for sat in candidate_satellites]
+                if load_indicator is None or len(load_indicator) <= max(candidate_ids):
+                    self.acb_policy_fallback_count += 1
+                    target_sat = max(candidate_satellites, key=lambda sat: self.angle[sat.id])
+                    self.execute_RA(target_sat)
+                    return
+                load_scale = float(candidate_satellites[0].Z)
+                probabilities = np.exp(
+                    -self.load_aware_eta
+                    * np.maximum(np.asarray(load_indicator)[candidate_ids], 0.0)
+                    / load_scale
+                )
+                prob_sum = np.sum(probabilities)
+                if prob_sum <= 0 or not np.isfinite(prob_sum):
+                    self.acb_policy_fallback_count += 1
+                    target_sat = max(candidate_satellites, key=lambda sat: self.angle[sat.id])
+                    self.execute_RA(target_sat)
+                    return
+                chosen_idx = np.random.choice(len(candidate_satellites), p=probabilities / prob_sum)
+                target_sat = candidate_satellites[chosen_idx]
                 self.execute_RA(target_sat)
                 return
             if self.fixed_channel_success_prob is not None:
@@ -666,8 +649,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.fixed_channel_success_prob = 1.0
         return len(ue_list) * sat_count
 
-    # VU and Mode 5 use the same 10-degree UE-side visibility filter. Mode 5
-    # still applies its A_g policy later, after filtering and renormalization.
+    # VU and Mode 5 use the same 10-degree UE-side visibility filter.
     visibility_min_elevation = 10 if mode in (3, 5) else min_elevation
 
     for sat in sat_snapshot:
@@ -708,10 +690,13 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.distance = distance_km[local_idx].copy()
             ue.selection_mode = mode
             ue.fixed_channel_success_prob = None
+            ue.load_indicator = None
             visible_indices = np.flatnonzero(visible_mask[local_idx])
             ue.visible_satellites = [sat_snapshot[i] for i in visible_indices]
             visible_count += len(visible_indices)
-            if sat_count >= 2:
+            if mode == 5:
+                ue.group = None
+            elif sat_count >= 2:
                 ue.group = (
                     sat_snapshot[sorted_indices[local_idx, 0]].id,
                     sat_snapshot[sorted_indices[local_idx, 1]].id,
@@ -901,6 +886,9 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         scenario_metadata=scenario_metadata,
         expected_sat_norad_ids=expected_sat_norad_ids,
     )
+    if selection_mode == 5:
+        group_weight_table = None
+        group_ps_table = None
     ctrl = controller(group_weight_table=group_weight_table, group_ps_table=group_ps_table)
     ctrl.load_aware_eta = LOAD_AWARE_ETA
     # 將真實衛星「封裝」進您的 Simulation Class
@@ -919,15 +907,18 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     # 主模擬迴圈
     RAO_COUNTS = SECONDS * 1000 // trao  # 將秒數轉換成640ms的Slot數
 
-    first_ps_table = next((table for table in group_ps_table if len(table) > 0), None)
-    if first_ps_table is None:
-        raise ValueError("group_ps_table has no groups; cannot infer satellite count.")
-    table_sat_count = len(next(iter(first_ps_table.values())))
-    if len(sat_list) < table_sat_count:
-        raise ValueError(
-            f"Fixed satellite pool has {len(sat_list)} satellites, but group_ps_table expects {table_sat_count}."
-        )
-    active_sat_pool = sat_list[:table_sat_count]
+    if selection_mode == 5:
+        active_sat_pool = sat_list
+    else:
+        first_ps_table = next((table for table in group_ps_table if len(table) > 0), None)
+        if first_ps_table is None:
+            raise ValueError("group_ps_table has no groups; cannot infer satellite count.")
+        table_sat_count = len(next(iter(first_ps_table.values())))
+        if len(sat_list) < table_sat_count:
+            raise ValueError(
+                f"Fixed satellite pool has {len(sat_list)} satellites, but group_ps_table expects {table_sat_count}."
+            )
+        active_sat_pool = sat_list[:table_sat_count]
 
     print(f"Active Sat Pool Size: {len(active_sat_pool)}")
 
@@ -1042,12 +1033,12 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         # Compute the precomputed p_s from the group selection policy; optionally replace it with lagged real p_s for control.
         if selection_mode == 2:
             precomputed_p_s = 1.0
-        elif selection_mode == 3:
+        elif selection_mode in (3, 5):
             # Mode 3 uses the preselection table for uniform random selection
             # over satellites visible above 10 degrees, matching its UE-side rule.
             if mode3_visible_random_ps_table is None:
                 raise ValueError(
-                    "VU requires mode3_visible_random_ps_table. "
+                    "Mode 3/5 requires mode3_visible_random_ps_table. "
                     "Regenerate group_ps_table.npz with satellite_preselection.py."
             )
             precomputed_p_s = mode3_visible_random_ps_table[n]

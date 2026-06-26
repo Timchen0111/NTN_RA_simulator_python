@@ -3,19 +3,36 @@ import numpy as np
 
 import main
 
-RUN_ALL = False
-RUN_QOS_DISTRIBUTION_COMPARISON = False
-RUN_RHO_SWEEP = False
-RHO_SWEEP_PB = True
-RUN_SATELLITE_SELECTION_SWEEP = False
-RUN_FIXED_LOAD_IMBALANCE_SWEEP = False
-RUN_SATELLITE_SELECTION_PERFORMANCE = False #Different epsilon values
-RUN_ESTIMATION_VALIDATION_RHO_SWEEP = False
-epsilon_sweep = False
+EXPERIMENT_CODE = 0
+SIM_SECONDS = 10
+EXPERIMENT_SWITCHES = {
+    0: "SINGLE_RUN",
+    1: "RUN_ALL",
+    2: "RHO_SWEEP_PB",
+    3: "RUN_QOS_DISTRIBUTION_COMPARISON",
+    4: "RUN_RHO_SWEEP",
+    5: "RUN_FIXED_LOAD_IMBALANCE_SWEEP",
+    6: "RUN_SATELLITE_SELECTION_SWEEP",
+    7: "RUN_ESTIMATION_VALIDATION_RHO_SWEEP",
+    8: "RUN_SATELLITE_SELECTION_PERFORMANCE",
+    9: "epsilon_sweep",
+}
+if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
+    raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
+
+RUN_ALL = EXPERIMENT_CODE == 1
+RHO_SWEEP_PB = EXPERIMENT_CODE == 2
+RUN_QOS_DISTRIBUTION_COMPARISON = EXPERIMENT_CODE == 3
+RUN_RHO_SWEEP = EXPERIMENT_CODE == 4
+RUN_FIXED_LOAD_IMBALANCE_SWEEP = EXPERIMENT_CODE == 5
+RUN_SATELLITE_SELECTION_SWEEP = EXPERIMENT_CODE == 6
+RUN_ESTIMATION_VALIDATION_RHO_SWEEP = EXPERIMENT_CODE == 7
+RUN_SATELLITE_SELECTION_PERFORMANCE = EXPERIMENT_CODE == 8 #Different epsilon values
+epsilon_sweep = EXPERIMENT_CODE == 9
 
 if RUN_ALL:
     NUM_UE = 10000
-    SECONDS = 10
+    SECONDS = SIM_SECONDS
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
@@ -107,7 +124,7 @@ if RUN_ALL:
 
 if RHO_SWEEP_PB:
     NUM_UE = 10000
-    SECONDS = 180
+    SECONDS = SIM_SECONDS
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
@@ -193,7 +210,7 @@ if RHO_SWEEP_PB:
 
 if RUN_QOS_DISTRIBUTION_COMPARISON:
     NUM_UE = 10000
-    SECONDS = 10
+    SECONDS = SIM_SECONDS
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
@@ -268,7 +285,7 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
 
 if RUN_RHO_SWEEP:
     NUM_UE = 10000
-    SECONDS = 10
+    SECONDS = SIM_SECONDS
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
@@ -356,7 +373,7 @@ if RUN_RHO_SWEEP:
 
 if RUN_FIXED_LOAD_IMBALANCE_SWEEP:
     NUM_UE = 10000
-    SECONDS = 10
+    SECONDS = SIM_SECONDS
     SEED = 42
     USE_REAL_PS = False
     RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
@@ -436,7 +453,7 @@ if RUN_FIXED_LOAD_IMBALANCE_SWEEP:
 
 if RUN_SATELLITE_SELECTION_SWEEP:
     NUM_UE = 10000
-    SECONDS = 10
+    SECONDS = SIM_SECONDS
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
@@ -551,7 +568,7 @@ if RUN_SATELLITE_SELECTION_SWEEP:
 
 if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
     NUM_UE = 10000
-    SECONDS = 180
+    SECONDS = SIM_SECONDS
     SEED = 42
     MODE = [6, 1]
     IMBALANCE_EPSILON = 0.01
@@ -693,7 +710,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
 
 if RUN_SATELLITE_SELECTION_PERFORMANCE:
     NUM_UE = 10000
-    SECONDS = 180
+    SECONDS = SIM_SECONDS
     SEED = 42
     USE_REAL_PS = False
     FIXED_EPSILON_MODE = [1, 1]
@@ -805,7 +822,7 @@ if epsilon_sweep:
     # Epsilon sweep for convex group satellite selection.
     EPSILON_VALUES = [0.0, 1e-4, 1e-3, 1e-2, 1e-1]
     EPSILON_RHO = 1.0
-    EPSILON_SECONDS = 100
+    EPSILON_SECONDS = SIM_SECONDS
     EPSILON_NUM_UE = 10000
     EPSILON_MODE = [1, 1]
     EPSILON_SEED = 42
@@ -885,12 +902,12 @@ if epsilon_sweep:
 
 # Current single-run experiment.
 num = 10000
-m = [6, 1] #Satellite selection mode and backoff control mode. 
+m = [5, 1] #Satellite selection mode and backoff control mode. 
 USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(1.2, 180, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(1.2, SIM_SECONDS, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
 load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {
