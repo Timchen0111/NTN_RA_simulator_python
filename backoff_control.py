@@ -96,7 +96,7 @@ def backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z, backoff_mode, Lam
         return proposed_backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z)
 
     if backoff_mode == 2:
-        return dynamic_acb_backoff(N_tilde, rho, D, p_d, p_s, K, Z)
+        return dynamic_acb_backoff(Lambda, rho, D, p_d, p_s, K, Z)
 
     if backoff_mode == 3:
         return priority_acb_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z, Lambda, state_ratio)
@@ -123,33 +123,26 @@ def proposed_backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z):
     return opt_p_b, opt_pi
 
 
-def dynamic_acb_backoff(N_tilde, rho, D, p_d, p_s, K, Z):
-    env = SatelliteEnv(N_tilde, rho)
+def dynamic_acb_backoff(Lambda, rho, D, p_d, p_s, K, Z):
     total_preambles = K * Z
-    if N_tilde <= 0:
+    if Lambda <= 0:
         access_prob = 1.0
     else:
-        access_prob = min(1.0, total_preambles / N_tilde)
+        access_prob = min(1.0, total_preambles / Lambda)
 
     backoff_prob = 1.0 - access_prob
     backoff = backoff_prob * np.ones(D)
-    _, _, opt_pi = env.solve_p_c(backoff, D, p_d, p_s, K, Z)
+    opt_pi = np.zeros(D) #隨便搞就好
     return backoff, opt_pi
 
 
 def priority_acb_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z, Lambda, state_ratio=None):
-    env = SatelliteEnv(N_tilde, rho)
-    if state_ratio is None:
-        _, _, state_ratio = env.solve_p_c(last_p_b, D, p_d, p_s, K, Z)
-        lambda_by_state = N_tilde * state_ratio
-    else:
-        state_ratio = np.asarray(state_ratio, dtype=float)
-        if len(state_ratio) != D or not np.all(np.isfinite(state_ratio)):
-            state_ratio = np.ones(D, dtype=float) / D
-        lambda_by_state = max(float(Lambda), 0.0) * state_ratio
+    state_ratio = np.asarray(state_ratio, dtype=float)
+    if len(state_ratio) != D or not np.all(np.isfinite(state_ratio)):
+        state_ratio = np.ones(D, dtype=float) / D
+    lambda_by_state = max(float(Lambda), 0.0) * state_ratio
     backoff = priority_acb_backoff(lambda_by_state, K * Z)
-    _, _, opt_pi = env.solve_p_c(backoff, D, p_d, p_s, K, Z)
-    return backoff, opt_pi
+    return backoff, state_ratio
 
 
 def get_loss(p_b, p_c, p_s, p_d_arr, D):

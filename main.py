@@ -5,6 +5,7 @@ import orbit
 from datetime import datetime, timezone, timedelta  # 必須有 timedelta
 import Load_estimator, backoff_control, N_estimate, selection
 import json
+from scipy.special import erf
 from scenario_time import get_tle_scenario_metadata, load_starlink_tles
 
 class controller:
@@ -185,11 +186,13 @@ class controller:
         return Lambda
     def backoff_control(self, total_load, rho, p_d, p_s, K, Z, backoff_mode,n):
         #實作backoff control
-        denominator = np.sum(self.observe_pi * (1 - self.p_b)) *p_s
-        #denominator = np.sum(self.actualPi[1:] * (1 - self.p_b)) *p_s
-        N_tilde = self.N_estimation(Lambda=total_load, denominator=denominator)
-        self.N_estimate = N_tilde
-        #N_tilde = 10000 #丟真值測試用
+        if backoff_mode == 1:
+            denominator = np.sum(self.observe_pi * (1 - self.p_b)) *p_s
+            #denominator = np.sum(self.actualPi[1:] * (1 - self.p_b)) *p_s
+            N_tilde = self.N_estimation(Lambda=total_load, denominator=denominator)
+            self.N_estimate = N_tilde
+        else:
+            N_tilde = self.N_estimate
         self.p_b, self.observe_pi = backoff_control.backoff_control(N_tilde, self.p_b, rho, self.Dmax, p_d, p_s, K, Z, backoff_mode, total_load, self.success_state_ratio)
         if n % 10 == 0:
             #print(f"Actual Pi: {self.actualPi}, Observed Pi: {self.observe_pi}")
@@ -342,6 +345,7 @@ class UE:
         self.A_g = None
         self.selection_mode = None
         self.fixed_channel_success_prob = None
+        self.channel_success_prob = np.zeros(0)
         self.load_indicator = None
         self.load_aware_eta = 1.0
         self.acb_selection_count = 0
@@ -462,8 +466,14 @@ class UE:
                     target_sat = max(candidate_satellites, key=lambda sat: self.angle[sat.id])
                     self.execute_RA(target_sat)
                     return
+                if len(self.channel_success_prob) <= max(candidate_ids):
+                    self.acb_policy_fallback_count += 1
+                    target_sat = max(candidate_satellites, key=lambda sat: self.angle[sat.id])
+                    self.execute_RA(target_sat)
+                    return
                 load_scale = float(candidate_satellites[0].Z)
-                probabilities = np.exp(
+                link_probabilities = np.asarray(self.channel_success_prob)[candidate_ids]
+                probabilities = link_probabilities * np.exp(
                     -self.load_aware_eta
                     * np.maximum(np.asarray(load_indicator)[candidate_ids], 0.0)
                     / load_scale
@@ -558,6 +568,45 @@ def calculate_ps(ctrl,n,group_weight_table, group_ps_table):
         p_s += w_g * group_success
     return p_s
 
+def _normal_cdf(x):
+    return 0.5 * (1.0 + erf(x / np.sqrt(2.0)))
+
+def estimate_channel_success_probability(elevation_angle, distance_km):
+    elevation_angle = np.asarray(elevation_angle, dtype=float)
+    distance_km = np.asarray(distance_km, dtype=float)
+    valid = (elevation_angle > 0) & (distance_km > 0)
+    elevation_angle = np.clip(elevation_angle, 0, 90)
+
+    p_los = np.interp(
+        elevation_angle,
+        [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+        [0.0, 0.782, 0.869, 0.919, 0.929, 0.935, 0.940, 0.949, 0.952, 0.998],
+    )
+    los_sigma = np.interp(
+        elevation_angle,
+        [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+        [1.79, 1.79, 1.14, 1.14, 0.92, 1.42, 1.56, 0.85, 0.72, 0.72],
+    )
+    nlos_sigma = np.interp(
+        elevation_angle,
+        [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+        [8.93, 8.93, 9.08, 8.78, 10.25, 10.56, 10.74, 10.17, 11.52, 11.52],
+    )
+    nlos_clutter_loss = np.interp(
+        elevation_angle,
+        [0, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+        [20.87, 19.52, 18.17, 18.42, 18.28, 18.63, 17.68, 16.50, 16.30, 16.30],
+    )
+
+    fspl_db = 92.45 + 20 * np.log10(2.0) + 20 * np.log10(np.maximum(distance_km, 1e-12))
+    noise_dbm = -174 + 10 * np.log10(0.4e6) + 5.0
+    base_margin_db = 23.01 + 24.0 - fspl_db - noise_dbm
+    p_success = (
+        p_los * _normal_cdf(base_margin_db / los_sigma)
+        + (1.0 - p_los) * _normal_cdf((base_margin_db - nlos_clutter_loss) / nlos_sigma)
+    )
+    return np.where(valid, p_success, 0.0)
+
 def channel_calculator(elevation_angle, distance_km):
     if elevation_angle <= 0:
         return False
@@ -647,6 +696,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.group = None
             ue.selection_mode = mode
             ue.fixed_channel_success_prob = None
+            ue.channel_success_prob = np.zeros(0)
         return 0
 
     sat_snapshot = list(sat_list)
@@ -660,6 +710,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.group = None
             ue.selection_mode = mode
             ue.fixed_channel_success_prob = 1.0
+            ue.channel_success_prob = np.ones(sat_count)
         return len(ue_list) * sat_count
 
     # VU and Mode 5 use the same 10-degree UE-side visibility filter.
@@ -693,6 +744,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
         horizontal_distance = np.hypot(east_component, north_component)
         elevation_deg = np.degrees(np.arctan2(up_component, horizontal_distance))
         distance_km = np.linalg.norm(delta, axis=2)
+        channel_success_prob = estimate_channel_success_probability(elevation_deg, distance_km) if mode == 5 else None
         visible_mask = elevation_deg > visibility_min_elevation
         sorted_indices = np.argsort(elevation_deg, axis=1)[:, ::-1]
 
@@ -703,6 +755,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.distance = distance_km[local_idx].copy()
             ue.selection_mode = mode
             ue.fixed_channel_success_prob = None
+            ue.channel_success_prob = channel_success_prob[local_idx].copy() if mode == 5 else np.zeros(sat_count)
             ue.load_indicator = None
             visible_indices = np.flatnonzero(visible_mask[local_idx])
             ue.visible_satellites = [sat_snapshot[i] for i in visible_indices]

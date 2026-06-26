@@ -5,6 +5,7 @@ import main
 
 EXPERIMENT_CODE = 0
 SIM_SECONDS = 10
+SIM_RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
 EXPERIMENT_SWITCHES = {
     0: "SINGLE_RUN",
     1: "RUN_ALL",
@@ -36,7 +37,7 @@ if RUN_ALL:
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    RHO_VALUES = SIM_RHO_VALUES
     # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
         ([6, 1], "Proposed / Proposed"),
@@ -129,7 +130,7 @@ if RHO_SWEEP_PB:
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
     MODE = [1, 1]
-    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    RHO_VALUES = SIM_RHO_VALUES
 
     pb_results = []
     for rho in RHO_VALUES:
@@ -289,7 +290,7 @@ if RUN_RHO_SWEEP:
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    RHO_VALUES = SIM_RHO_VALUES
     MODES = [
         ([6, 1], "Proposed"),
         ([6, 2], "DACB"),
@@ -376,7 +377,7 @@ if RUN_FIXED_LOAD_IMBALANCE_SWEEP:
     SECONDS = SIM_SECONDS
     SEED = 42
     USE_REAL_PS = False
-    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    RHO_VALUES = SIM_RHO_VALUES
 
     def epsilon_plot_label(epsilon):
         exponent = np.log10(epsilon) if epsilon > 0 else np.nan
@@ -457,7 +458,7 @@ if RUN_SATELLITE_SELECTION_SWEEP:
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    RHO_VALUES = SIM_RHO_VALUES
 
     def epsilon_plot_label(epsilon):
         exponent = np.log10(epsilon) if epsilon > 0 else np.nan
@@ -574,7 +575,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
     IMBALANCE_EPSILON = 0.01
     USE_REAL_PS = False
     ADAPTIVE_EPSILON_ALPHA = 2.0
-    RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    RHO_VALUES = SIM_RHO_VALUES
 
     validation_results = []
     for rho in RHO_VALUES:
@@ -717,7 +718,7 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
     ADAPTIVE_EPSILON_MODE = [6, 1]
     FIXED_EPSILON_RHO = 1.0
     FIXED_EPSILON_VALUES = [1e-4, 1e-3, 1e-2, 1e-1]
-    ADAPTIVE_EPSILON_RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+    ADAPTIVE_EPSILON_RHO_VALUES = SIM_RHO_VALUES
     ADAPTIVE_EPSILON_ALPHA = 2.0
 
     fixed_epsilon_results = []
@@ -902,7 +903,7 @@ if epsilon_sweep:
 
 # Current single-run experiment.
 num = 10000
-m = [5, 3] #Satellite selection mode and backoff control mode. 
+m = [5, 1] #Satellite selection mode and backoff control mode. 
 USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
