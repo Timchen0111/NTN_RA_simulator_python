@@ -35,7 +35,7 @@ class controller:
         self.previous_A_by_group = None
         self.selection_policy_variation_history = []
     def set_group_probabilities_for_rao(self, n, selection_mode, use_convex_solver=False, imbalance_epsilon=0.01, preamble_count=None):
-        if selection_mode == 5:
+        if selection_mode in (5, 7):
             self.A_by_group = {}
             return
         if self.group_weight_table is None:
@@ -95,7 +95,7 @@ class controller:
             for group, probabilities in self.A_by_group.items()
         }
 
-        if selection_mode in (3, 5):
+        if selection_mode in (3, 5, 7):
             self.selection_policy_variation_history.append({
                 "time_slot": n,
                 "mean_tv": np.nan,
@@ -194,7 +194,7 @@ class controller:
         else:
             N_tilde = self.N_estimate
         self.p_b, self.observe_pi = backoff_control.backoff_control(N_tilde, self.p_b, rho, self.Dmax, p_d, p_s, K, Z, backoff_mode, total_load, self.success_state_ratio)
-        if n % 10 == 0:
+        if backoff_mode == 1 and n % 10 == 0:
             #print(f"Actual Pi: {self.actualPi}, Observed Pi: {self.observe_pi}")
             self.actual.append(list(self.actualPi))
         #print(f"Backoff control updated: p_b={self.p_b}, pi={self.observe_pi}")
@@ -417,7 +417,7 @@ class UE:
         #取得系統資訊，包含backoff機率和衛星選擇資訊
         #print(f"UE {self.id}, group {self.group}")
         self.p_b = ctrl.p_b
-        if self.selection_mode == 5:
+        if self.selection_mode in (5, 7):
             self.load_indicator = ctrl.last_load_indicator
             self.load_aware_eta = ctrl.load_aware_eta
             self.A_g = None
@@ -447,8 +447,8 @@ class UE:
 
         if r < self.p_b[remaining_budget - 1]:
             backoff = True
-        if self.selection_mode in (3, 5):
-            # VU and Mode 5 select only from the UE-side visible set.
+        if self.selection_mode in (3, 5, 7):
+            # VU and load-aware modes select only from the UE-side visible set.
             candidate_satellites = self.visible_satellites
         else:
             candidate_satellites = self.all_satellites if len(self.all_satellites) > 0 else self.visible_satellites
@@ -458,7 +458,7 @@ class UE:
                 target_sat = np.random.choice(candidate_satellites)
                 self.execute_RA(target_sat)
                 return
-            if self.selection_mode == 5:
+            if self.selection_mode in (5, 7):
                 load_indicator = self.load_indicator
                 candidate_ids = [sat.id for sat in candidate_satellites]
                 if load_indicator is None or len(load_indicator) <= max(candidate_ids):
@@ -484,7 +484,10 @@ class UE:
                     target_sat = max(candidate_satellites, key=lambda sat: self.angle[sat.id])
                     self.execute_RA(target_sat)
                     return
-                chosen_idx = np.random.choice(len(candidate_satellites), p=probabilities / prob_sum)
+                if self.selection_mode == 5:
+                    chosen_idx = np.random.choice(len(candidate_satellites), p=probabilities / prob_sum)
+                else:
+                    chosen_idx = int(np.argmax(probabilities))
                 target_sat = candidate_satellites[chosen_idx]
                 self.execute_RA(target_sat)
                 return
@@ -713,8 +716,8 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.channel_success_prob = np.ones(sat_count)
         return len(ue_list) * sat_count
 
-    # VU and Mode 5 use the same 10-degree UE-side visibility filter.
-    visibility_min_elevation = 10 if mode in (3, 5) else min_elevation
+    # VU and load-aware modes use the same 10-degree UE-side visibility filter.
+    visibility_min_elevation = 10 if mode in (3, 5, 7) else min_elevation
 
     for sat in sat_snapshot:
         if sat.id < 0 or sat.id >= sat_count:
@@ -744,7 +747,7 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
         horizontal_distance = np.hypot(east_component, north_component)
         elevation_deg = np.degrees(np.arctan2(up_component, horizontal_distance))
         distance_km = np.linalg.norm(delta, axis=2)
-        channel_success_prob = estimate_channel_success_probability(elevation_deg, distance_km) if mode == 5 else None
+        channel_success_prob = estimate_channel_success_probability(elevation_deg, distance_km) if mode in (5, 7) else None
         visible_mask = elevation_deg > visibility_min_elevation
         sorted_indices = np.argsort(elevation_deg, axis=1)[:, ::-1]
 
@@ -755,12 +758,12 @@ def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_eleva
             ue.distance = distance_km[local_idx].copy()
             ue.selection_mode = mode
             ue.fixed_channel_success_prob = None
-            ue.channel_success_prob = channel_success_prob[local_idx].copy() if mode == 5 else np.zeros(sat_count)
+            ue.channel_success_prob = channel_success_prob[local_idx].copy() if mode in (5, 7) else np.zeros(sat_count)
             ue.load_indicator = None
             visible_indices = np.flatnonzero(visible_mask[local_idx])
             ue.visible_satellites = [sat_snapshot[i] for i in visible_indices]
             visible_count += len(visible_indices)
-            if mode == 5:
+            if mode in (5, 7):
                 ue.group = None
             elif sat_count >= 2:
                 ue.group = (
@@ -892,7 +895,7 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
         print(f"VU ps table shape: {mode3_visible_random_ps_table.shape}")
     return group_weight_table, group_ps_table, mode3_visible_random_ps_table
 
-def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=5.0, LOAD_AWARE_LOAD_EMA_BETA=0.2, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=2.0, ADAPTIVE_EPSILON_BETA=0.2, QOS_DISTRIBUTION=None):
+def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=1.0, LOAD_AWARE_LOAD_EMA_BETA=0.2, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=2.0, ADAPTIVE_EPSILON_BETA=0.2, QOS_DISTRIBUTION=None):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
     if MODE == 0:
@@ -952,7 +955,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         scenario_metadata=scenario_metadata,
         expected_sat_norad_ids=expected_sat_norad_ids,
     )
-    if selection_mode == 5:
+    if selection_mode in (5, 7):
         group_weight_table = None
         group_ps_table = None
     ctrl = controller(group_weight_table=group_weight_table, group_ps_table=group_ps_table)
@@ -973,7 +976,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     # 主模擬迴圈
     RAO_COUNTS = SECONDS * 1000 // trao  # 將秒數轉換成640ms的Slot數
 
-    if selection_mode == 5:
+    if selection_mode in (5, 7):
         active_sat_pool = sat_list
     else:
         first_ps_table = next((table for table in group_ps_table if len(table) > 0), None)
@@ -1099,12 +1102,12 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         # Compute the precomputed p_s from the group selection policy; optionally replace it with lagged real p_s for control.
         if selection_mode == 2:
             precomputed_p_s = 1.0
-        elif selection_mode in (3, 5):
+        elif selection_mode in (3, 5, 7):
             # Mode 3 uses the preselection table for uniform random selection
             # over satellites visible above 10 degrees, matching its UE-side rule.
             if mode3_visible_random_ps_table is None:
                 raise ValueError(
-                    "Mode 3/5 requires mode3_visible_random_ps_table. "
+                    "Mode 3/5/7 requires mode3_visible_random_ps_table. "
                     "Regenerate group_ps_table.npz with satellite_preselection.py."
             )
             precomputed_p_s = mode3_visible_random_ps_table[n]
@@ -1117,18 +1120,23 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
             ctrl.backoff_control(total_load=sum(Lambda), rho=rho_rao, p_d = ue_list[0].QoS_requirement, p_s=p_s, K=ctrl.sat_num, Z=sat_list[0].Z,backoff_mode=backoff_mode,n=n)
             p_b_history.append(ctrl.p_b.copy())
             current_n_hat = ctrl.N_estimate
-        n_history.append(current_n_hat)
+        if backoff_mode == 1:
+            n_history.append(current_n_hat)
         
         if n % 50 == 0:
-            print(f"Current N_tilde: {ctrl.N_estimate}, Total Load (Lambda): {sum(Lambda)}, Backoff rate: {ctrl.p_b}", end='\n')
+            if backoff_mode == 1:
+                print(f"Current N_tilde: {ctrl.N_estimate}, Total Load (Lambda): {sum(Lambda)}, Backoff rate: {ctrl.p_b}", end='\n')
+            else:
+                print(f"Total Load (Lambda): {sum(Lambda)}, Backoff rate: {ctrl.p_b}", end='\n')
 
         for ue in ue_list:
             if ue.active: #只對active的UE計算ACB和決定順序
                 ue.acquire_SIB(ctrl)
 
         # 中文註解：記錄本輪 UE 執行 RA 前的通道成功/失敗累積值，用來計算本輪真實 p_s。
-        channel_success_before = sum(ue.transmission_success for ue in ue_list)
-        channel_fail_before = sum(ue.transmission_fail for ue in ue_list)
+        if backoff_mode == 1:
+            channel_success_before = sum(ue.transmission_success for ue in ue_list)
+            channel_fail_before = sum(ue.transmission_fail for ue in ue_list)
 
         # UE-side processing
         for ue in ue_list:
@@ -1137,28 +1145,29 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
                 ue.ACB_test()
 
         # 中文註解：真實 p_s 定義為本輪實際嘗試 RA 的 UE 中，通道判定成功的比例；若本輪無嘗試則不計算。
-        channel_success_after = sum(ue.transmission_success for ue in ue_list)
-        channel_fail_after = sum(ue.transmission_fail for ue in ue_list)
-        slot_channel_success = channel_success_after - channel_success_before
-        slot_channel_fail = channel_fail_after - channel_fail_before
-        slot_channel_attempts = slot_channel_success + slot_channel_fail
-        if slot_channel_attempts > 0:
-            real_p_s = slot_channel_success / slot_channel_attempts
-            last_real_p_s = real_p_s
-            ps_history.append({
-                "time_slot": n,
-                "real": real_p_s,
-                "precomputed": precomputed_p_s,
-                "control": p_s,
-                "error": real_p_s - precomputed_p_s,
-            })
-            if n % 50 == 0:
-                print(
-                    f"RAO {n}: Real p_s={real_p_s:.4f}, "
-                    f"Precomputed p_s={precomputed_p_s:.4f}, "
-                    f"Control p_s={p_s:.4f}, "
-                    f"Diff={real_p_s - precomputed_p_s:+.4f}"
-                )
+        if backoff_mode == 1:
+            channel_success_after = sum(ue.transmission_success for ue in ue_list)
+            channel_fail_after = sum(ue.transmission_fail for ue in ue_list)
+            slot_channel_success = channel_success_after - channel_success_before
+            slot_channel_fail = channel_fail_after - channel_fail_before
+            slot_channel_attempts = slot_channel_success + slot_channel_fail
+            if slot_channel_attempts > 0:
+                real_p_s = slot_channel_success / slot_channel_attempts
+                last_real_p_s = real_p_s
+                ps_history.append({
+                    "time_slot": n,
+                    "real": real_p_s,
+                    "precomputed": precomputed_p_s,
+                    "control": p_s,
+                    "error": real_p_s - precomputed_p_s,
+                })
+                if n % 50 == 0:
+                    print(
+                        f"RAO {n}: Real p_s={real_p_s:.4f}, "
+                        f"Precomputed p_s={precomputed_p_s:.4f}, "
+                        f"Control p_s={p_s:.4f}, "
+                        f"Diff={real_p_s - precomputed_p_s:+.4f}"
+                    )
         #else:
             #print(f"RAO {n}: Real p_s=N/A (no RA attempts), Precomputed p_s={p_s:.4f}")
             
@@ -1241,7 +1250,8 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         "selection_policy_variation_mean": selection_policy_variation_mean,
         "selection_policy_variation_max": selection_policy_variation_max,
     }
-    return avg_throughput, plr, n_history, ctrl.actual, ctrl.observe_pi, ctrl.history_reward, run_history
+    reported_pi = ctrl.observe_pi if backoff_mode == 1 else np.array([])
+    return avg_throughput, plr, n_history, ctrl.actual, reported_pi, ctrl.history_reward, run_history
 
 
     

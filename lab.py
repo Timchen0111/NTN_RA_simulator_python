@@ -3,7 +3,7 @@ import numpy as np
 
 import main
 
-EXPERIMENT_CODE = 0
+EXPERIMENT_CODE = 6
 SIM_SECONDS = 10
 SIM_RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
 EXPERIMENT_SWITCHES = {
@@ -118,8 +118,8 @@ if RUN_ALL:
                 f"{label}, arrival rate={item['rho']:.4f}: "
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
-                f"avg_delay_ms={item['average_delay_ms']:.2f}, "
-                f"final_N={item['final_n_estimate']:.2f}"
+                f"avg_delay_ms={item['average_delay_ms']:.2f}"
+                + (f", final_N={item['final_n_estimate']:.2f}" if np.isfinite(item["final_n_estimate"]) else "")
             )
     raise SystemExit
 
@@ -279,8 +279,8 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
                 f"{label}, {item['qos_label']}: "
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
-                f"avg_delay_ms={item['average_delay_ms']:.2f}, "
-                f"final_N={item['final_n_estimate']:.2f}"
+                f"avg_delay_ms={item['average_delay_ms']:.2f}"
+                + (f", final_N={item['final_n_estimate']:.2f}" if np.isfinite(item["final_n_estimate"]) else "")
             )
     raise SystemExit
 
@@ -367,8 +367,8 @@ if RUN_RHO_SWEEP:
                 f"{label}, arrival rate={item['rho']:.4f}: "
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
-                f"avg_delay_ms={item['average_delay_ms']:.2f}, "
-                f"final_N={item['final_n_estimate']:.2f}"
+                f"avg_delay_ms={item['average_delay_ms']:.2f}"
+                + (f", final_N={item['final_n_estimate']:.2f}" if np.isfinite(item["final_n_estimate"]) else "")
             )
     raise SystemExit
 
@@ -475,17 +475,19 @@ if RUN_SATELLITE_SELECTION_SWEEP:
         return f"ε={epsilon:g}"
 
     EXPERIMENTS = [
-        ([3, 1], "VU", {}),
-        ([4, 1], "HE", {}),
-        ([5, 1], "LLA", {}),
-        ([6, 1], r"Adaptive $\epsilon^m$", "Adaptive ε^m", 0.1),
+        #([3, 1], "VU", {}),
+        #([4, 1], "HE", {}),
+        ([5, 3], "ALLA", {}),
+        ([6, 3], r"Adaptive $\epsilon^m$", "Adaptive ε^m", 0.1),
+         ([7, 3], r"Adaptive $\epsilon^m$", "Adaptive ε^m", 0.1),
     ]
 
     EXPERIMENTS = [
-        ([3, 1], "VU", {}),
-        ([4, 1], "HE", {}),
-        ([5, 1], "LLA", {}),
-        ([6, 1], "Proposed", {}),
+        #([3, 1], "VU", {}),
+        #([4, 1], "HE", {}),
+        ([5, 3], "ALLA", {}),
+        ([6, 3], "Proposed", {}),
+        ([7, 3], "LLA", {}),
     ]
 
     # Satellite-selection baselines keep the proposed backoff controller fixed
@@ -903,7 +905,7 @@ if epsilon_sweep:
 
 # Current single-run experiment.
 num = 10000
-m = [5, 1] #Satellite selection mode and backoff control mode. 
+m = [7,3] #Satellite selection mode and backoff control mode. 
 USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
@@ -941,22 +943,23 @@ plt.tight_layout(rect=[0, 0.03, 1, 0.92])
 plt.show()
 
 
-plt.figure(figsize=(10, 6))
-plt.axhline(y=num, color="black", linestyle="--", label=f"True N ({num})", alpha=0.6)
-plt.plot(
-    range(len(results[result_key]["N_tilde"])),
-    results[result_key]["N_tilde"],
-    label="Proposed",
-    color="blue",
-    linewidth=1.5,
-)
+if m[1] == 1:
+    plt.figure(figsize=(10, 6))
+    plt.axhline(y=num, color="black", linestyle="--", label=f"True N ({num})", alpha=0.6)
+    plt.plot(
+        range(len(results[result_key]["N_tilde"])),
+        results[result_key]["N_tilde"],
+        label="Proposed",
+        color="blue",
+        linewidth=1.5,
+    )
 
-plt.title("Population Estimation Convergence")
-plt.xlabel("Time Slot (n)")
-plt.ylabel("Estimated Population")
-plt.grid(True, alpha=0.3)
-plt.legend()
-plt.show()
+    plt.title("Population Estimation Convergence")
+    plt.xlabel("Time Slot (n)")
+    plt.ylabel("Estimated Population")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.show()
 
 
 plt.figure(figsize=(10, 6))
@@ -1060,7 +1063,7 @@ if pi_history.size > 0:
     axes[1].legend()
     plt.tight_layout()
     plt.show()
-else:
+elif m[1] == 1:
     print("No pi history was recorded; skip state distribution plot.")
 
 
@@ -1095,11 +1098,12 @@ if len(ps_history) > 0:
     plt.legend()
     plt.tight_layout()
     plt.show()
-else:
+elif m[1] == 1:
     print("No p_s history was recorded; skip p_s error plots.")
 
 print("--- Test Complete ---")
 print(f"Packet Loss Rate: {results[result_key]['SuccessRate']:.4f}")
 print(f"Average Throughput: {single_throughput:.2f}")
 print(f"AverageDelay (ms): {single_delay_ms:.2f}")
-print(f"p_s MAE: {ps_mae:.6f}" if np.isfinite(ps_mae) else "p_s MAE: N/A")
+if m[1] == 1:
+    print(f"p_s MAE: {ps_mae:.6f}" if np.isfinite(ps_mae) else "p_s MAE: N/A")
