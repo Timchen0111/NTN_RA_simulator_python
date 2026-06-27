@@ -8,7 +8,7 @@ from main import channel_visibility
 from scenario_time import as_utc_datetime, get_tle_scenario_metadata
 
 
-def save_satellite_pool(real_sats, filename="fixed_satellite_pool.json"):
+def save_satellite_pool(real_sats, filename="fixed_satellite_pool_new.json"):
     records = []
 
     for fixed_id, sat in enumerate(real_sats):
@@ -255,4 +255,4 @@ def main(NUM_SAT):
     )
 
 if __name__ == "__main__":
-    main(NUM_SAT=3)
+    main(NUM_SAT=4)
