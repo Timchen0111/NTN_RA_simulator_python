@@ -3,9 +3,9 @@ import numpy as np
 
 import main
 
-EXPERIMENT_CODE = 6
-SIM_SECONDS = 10
-SIM_RHO_VALUES = np.array([0.4, 0.8, 1.2, 1.6, 2.0])
+EXPERIMENT_CODE = 0
+SIM_SECONDS = 50
+SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 EXPERIMENT_SWITCHES = {
     0: "SINGLE_RUN",
     1: "RUN_ALL",
@@ -17,6 +17,7 @@ EXPERIMENT_SWITCHES = {
     7: "RUN_ESTIMATION_VALIDATION_RHO_SWEEP",
     8: "RUN_SATELLITE_SELECTION_PERFORMANCE",
     9: "epsilon_sweep",
+    10: "RUN_ALLA_ETA_SWEEP",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -30,6 +31,7 @@ RUN_SATELLITE_SELECTION_SWEEP = EXPERIMENT_CODE == 6
 RUN_ESTIMATION_VALIDATION_RHO_SWEEP = EXPERIMENT_CODE == 7
 RUN_SATELLITE_SELECTION_PERFORMANCE = EXPERIMENT_CODE == 8 #Different epsilon values
 epsilon_sweep = EXPERIMENT_CODE == 9
+RUN_ALLA_ETA_SWEEP = EXPERIMENT_CODE == 10
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -903,9 +905,55 @@ if epsilon_sweep:
     raise SystemExit
 
 
+if RUN_ALLA_ETA_SWEEP:
+    NUM_UE = 10000
+    SECONDS = SIM_SECONDS
+    SEED = 42
+    RHO_VALUES = SIM_RHO_VALUES
+    MODE = [5, 3]
+    IMBALANCE_EPSILON = 0.001
+    USE_REAL_PS = False
+    ETA_VALUES = np.array([0.5,1,2,4,8,16])
+
+    eta_results = {}
+    for rho in RHO_VALUES:
+        eta_results[rho] = []
+        for eta in ETA_VALUES:
+            print(f"\nRunning ALLA eta sweep: rho={rho:g}, eta={eta:g}")
+            _, plr, _, _, _, _, _ = main.main(
+                rho,
+                SECONDS,
+                NUM_UE,
+                MODE,
+                SEED,
+                IMBALANCE_EPSILON,
+                USE_REAL_PS=USE_REAL_PS,
+                LOAD_AWARE_ETA=eta,
+            )
+            eta_results[rho].append(plr)
+
+    plt.figure(figsize=(10, 6))
+    for rho in RHO_VALUES:
+        plt.plot(ETA_VALUES, eta_results[rho], marker="o", label=rf"$\rho_s={rho:g}$")
+    plt.title(r"ALLA PLR under Different $\eta$ and Loads")
+    plt.xlabel(r"ALLA $\eta$")
+    plt.ylabel("Packet Loss Rate")
+    plt.xscale("log")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- ALLA Eta Sweep Complete ---")
+    for rho in RHO_VALUES:
+        for eta, plr in zip(ETA_VALUES, eta_results[rho]):
+            print(f"rho={rho:g}, eta={eta:g}: PLR={plr:.4f}")
+    raise SystemExit
+
+
 # Current single-run experiment.
 num = 10000
-m = [7,3] #Satellite selection mode and backoff control mode. 
+m = [6,1] #Satellite selection mode and backoff control mode. 
 USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
