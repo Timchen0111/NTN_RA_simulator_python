@@ -12,7 +12,7 @@ class controller:
     def __init__(self, group_weight_table=None, group_ps_table=None):
         self.satellites = []
         self.sat_num = len(self.satellites) 
-        self.Dmax = 5 #Delay budget的最大值
+        self.Dmax = 20 #Delay budget的最大值
         self.p_b = np.zeros(self.Dmax)
         self.observe_pi = np.ones(self.Dmax) / self.Dmax
         self.success_state_ratio = np.ones(self.Dmax) / self.Dmax
@@ -339,7 +339,8 @@ class UE:
         self.transmission_fail = 0
         self.active = False #Boolean
         self.active_prob = rho
-        self.QoS_requirement = [0.2,0.2,0.2,0.2,0.2] #對應不同delay budget的QoS需求，總和為1
+        self.QoS_requirement = np.zeros(20)
+        self.QoS_requirement[[4, 9, 14, 19]] = 0.25
         self.visible_satellites = []
         self.all_satellites = []
         self.A_g = None
@@ -409,7 +410,7 @@ class UE:
     def new_packet(self):
         self.active = True
         r = np.random.rand()
-        self.budget = np.random.choice([1, 2, 3, 4, 5], p=self.QoS_requirement) #根據QoS需求隨機分配delay budget
+        self.budget = np.random.choice(np.arange(1, 21), p=self.QoS_requirement) #根據QoS需求隨機分配delay budget
         self.delay = 0
         self.current_delay_raos = 1
         self.target_satellite = None
@@ -918,14 +919,14 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     print(f"Load-aware eta: {LOAD_AWARE_ETA}")
     if selection_mode == 5:
         print(f"Mode 5 load EMA beta: {LOAD_AWARE_LOAD_EMA_BETA}")
-    # Optional QoS sweep hook: keep the legacy uniform distribution when no
-    # experiment-specific delay budget distribution is provided.
+    # Optional QoS sweep hook: use the default delay distribution when none is provided.
     if QOS_DISTRIBUTION is None:
-        qos_distribution = np.array([0.2, 0.2, 0.2, 0.2, 0.2], dtype=float)
+        qos_distribution = np.zeros(20, dtype=float)
+        qos_distribution[[4, 9, 14, 19]] = 0.25
     else:
         qos_distribution = np.asarray(QOS_DISTRIBUTION, dtype=float)
-        if qos_distribution.shape != (5,):
-            raise ValueError("QOS_DISTRIBUTION must contain five probabilities for delay budgets 1..5.")
+        if qos_distribution.shape != (20,):
+            raise ValueError("QOS_DISTRIBUTION must contain 20 probabilities for delay budgets 1..20.")
         if np.any(qos_distribution < 0) or not np.all(np.isfinite(qos_distribution)):
             raise ValueError("QOS_DISTRIBUTION must contain finite non-negative probabilities.")
         qos_sum = float(np.sum(qos_distribution))
@@ -1052,7 +1053,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         if selection_mode == 0: #測試模式，不是真的跑模擬
             eval_metrics = evaluate_visibility_heterogeneity(ue_list)
             return eval_metrics
-        real_counts = np.zeros(5)
+        real_counts = np.zeros(ctrl.Dmax)
         idle_ue_count=0
         for ue in ue_list:
             if ue.active:

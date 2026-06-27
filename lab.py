@@ -149,11 +149,11 @@ if UE_SWEEP_PB:
         )
 
         p_b_history = np.asarray(run_history.get("p_b_history", []), dtype=float)
-        average_p_b = np.full(5, np.nan)
+        average_p_b = np.full(20, np.nan)
         if p_b_history.size > 0:
             if p_b_history.ndim == 1:
                 p_b_history = p_b_history.reshape(1, -1)
-            state_count = min(5, p_b_history.shape[1])
+            state_count = min(20, p_b_history.shape[1])
             average_p_b[:state_count] = np.mean(p_b_history[:, :state_count], axis=0)
 
         pb_results.append({
@@ -193,7 +193,7 @@ if UE_SWEEP_PB:
     plt.xlabel("Number of UEs")
     plt.ylabel("State")
     plt.xticks(np.arange(len(ue_axis)), [f"{num_ue:g}" for num_ue in ue_axis])
-    plt.yticks(np.arange(5), [f"State {idx}" for idx in range(1, 6)])
+    plt.yticks(np.arange(20), [f"State {idx}" for idx in range(1, 21)])
     plt.tight_layout()
     plt.show()
 
@@ -228,11 +228,10 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
         ([4, 1], "HE / Proposed"),
         ([5, 1], "LLA / Proposed"),
     ]
+    qos_default = np.zeros(20)
+    qos_default[[4, 9, 14, 19]] = 0.25
     QOS_DISTRIBUTIONS = [
-        ("Q1\n[0.2,0.2,0.2,0.2,0.2]", np.array([0.2, 0.2, 0.2, 0.2, 0.2])),
-        ("Q2\n[0,0,0,0,1]", np.array([0.0, 0.0, 0.0, 0.0, 1.0])),
-        ("Q3\n[0.5,0,0,0,0.5]", np.array([0.5, 0.0, 0.0, 0.0, 0.5])),
-        ("Q4\n[0.1,0.1,0.2,0.3,0.3]", np.array([0.1, 0.1, 0.2, 0.3, 0.3])),
+        ("Q1\nP(5,10,15,20)=0.25", qos_default),
     ]
 
     qos_results = {label: [] for _, label in MODES}
