@@ -3,18 +3,19 @@ import numpy as np
 
 import main
 
-EXPERIMENT_CODE = 0
-SIM_SECONDS = 50
-SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
+EXPERIMENT_CODE = 6
+SIM_SECONDS = 10
+SIM_RHO = 1.5
+SIM_NUM_UE_VALUES = np.array([5000, 10000, 15000, 20000])
 EXPERIMENT_SWITCHES = {
     0: "SINGLE_RUN",
     1: "RUN_ALL",
-    2: "RHO_SWEEP_PB",
+    2: "UE_SWEEP_PB",
     3: "RUN_QOS_DISTRIBUTION_COMPARISON",
-    4: "RUN_RHO_SWEEP",
+    4: "RUN_UE_SWEEP",
     5: "RUN_FIXED_LOAD_IMBALANCE_SWEEP",
     6: "RUN_SATELLITE_SELECTION_SWEEP",
-    7: "RUN_ESTIMATION_VALIDATION_RHO_SWEEP",
+    7: "RUN_ESTIMATION_VALIDATION_UE_SWEEP",
     8: "RUN_SATELLITE_SELECTION_PERFORMANCE",
     9: "epsilon_sweep",
     10: "RUN_ALLA_ETA_SWEEP",
@@ -23,23 +24,23 @@ if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
 
 RUN_ALL = EXPERIMENT_CODE == 1
-RHO_SWEEP_PB = EXPERIMENT_CODE == 2
+UE_SWEEP_PB = EXPERIMENT_CODE == 2
 RUN_QOS_DISTRIBUTION_COMPARISON = EXPERIMENT_CODE == 3
-RUN_RHO_SWEEP = EXPERIMENT_CODE == 4
+RUN_UE_SWEEP = EXPERIMENT_CODE == 4
 RUN_FIXED_LOAD_IMBALANCE_SWEEP = EXPERIMENT_CODE == 5
 RUN_SATELLITE_SELECTION_SWEEP = EXPERIMENT_CODE == 6
-RUN_ESTIMATION_VALIDATION_RHO_SWEEP = EXPERIMENT_CODE == 7
+RUN_ESTIMATION_VALIDATION_UE_SWEEP = EXPERIMENT_CODE == 7
 RUN_SATELLITE_SELECTION_PERFORMANCE = EXPERIMENT_CODE == 8 #Different epsilon values
 epsilon_sweep = EXPERIMENT_CODE == 9
 RUN_ALLA_ETA_SWEEP = EXPERIMENT_CODE == 10
 
 if RUN_ALL:
-    NUM_UE = 10000
     SECONDS = SIM_SECONDS
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = SIM_RHO_VALUES
+    RHO = SIM_RHO
+    NUM_UE_VALUES = SIM_NUM_UE_VALUES
     # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
         ([6, 1], "Proposed / Proposed"),
@@ -52,22 +53,22 @@ if RUN_ALL:
 
     # Backoff settings 2 and 3 are ACB baselines; all other experiment parameters are
     # kept identical to the proposed setting so the PLR curves isolate the backoff controller.
-    rho_results = {label: [] for _, label in MODES}
+    ue_results = {label: [] for _, label in MODES}
     for mode, label in MODES:
-        for rho in RHO_VALUES:
-            print(f"\nRunning PLR arrival-rate sweep: {label}, arrival rate={rho}")
+        for num_ue in NUM_UE_VALUES:
+            print(f"\nRunning PLR UE-number sweep: {label}, NUM_UE={num_ue}")
             avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
-                rho,
+                RHO,
                 SECONDS,
-                NUM_UE,
+                num_ue,
                 mode,
                 SEED,
                 IMBALANCE_EPSILON,
                 USE_REAL_PS=USE_REAL_PS,
             )
             final_n_estimate = n_history[-1] if len(n_history) > 0 else np.nan
-            rho_results[label].append({
-                "rho": rho,
+            ue_results[label].append({
+                "num_ue": num_ue,
                 "plr": plr,
                 "throughput": avg_throughput,
                 "average_delay_ms": run_history.get("average_delay_ms", np.nan),
@@ -76,11 +77,11 @@ if RUN_ALL:
 
     plt.figure(figsize=(10, 6))
     for _, label in MODES:
-        rho_axis = np.array([item["rho"] for item in rho_results[label]])
-        plr_values = np.array([item["plr"] for item in rho_results[label]])
-        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=label)
-    plt.title("PLR Comparison under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+        ue_axis = np.array([item["num_ue"] for item in ue_results[label]])
+        plr_values = np.array([item["plr"] for item in ue_results[label]])
+        plt.plot(ue_axis, plr_values, marker="o", linewidth=1.6, label=label)
+    plt.title("PLR Comparison under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("Packet Loss Rate")
     plt.grid(True, alpha=0.3)
     plt.legend()
@@ -89,11 +90,11 @@ if RUN_ALL:
 
     plt.figure(figsize=(10, 6))
     for _, label in MODES:
-        rho_axis = np.array([item["rho"] for item in rho_results[label]])
-        throughput_values = np.array([item["throughput"] for item in rho_results[label]])
-        plt.plot(rho_axis, throughput_values, marker="o", linewidth=1.6, label=label)
-    plt.title("Throughput Comparison under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+        ue_axis = np.array([item["num_ue"] for item in ue_results[label]])
+        throughput_values = np.array([item["throughput"] for item in ue_results[label]])
+        plt.plot(ue_axis, throughput_values, marker="o", linewidth=1.6, label=label)
+    plt.title("Throughput Comparison under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("Average Throughput (packets/second)")
     plt.grid(True, alpha=0.3)
     plt.legend()
@@ -102,22 +103,22 @@ if RUN_ALL:
 
     plt.figure(figsize=(10, 6))
     for _, label in MODES:
-        rho_axis = np.array([item["rho"] for item in rho_results[label]])
-        delay_values = np.array([item["average_delay_ms"] for item in rho_results[label]])
-        plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=label)
-    plt.title("AverageDelay Comparison under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+        ue_axis = np.array([item["num_ue"] for item in ue_results[label]])
+        delay_values = np.array([item["average_delay_ms"] for item in ue_results[label]])
+        plt.plot(ue_axis, delay_values, marker="o", linewidth=1.6, label=label)
+    plt.title("AverageDelay Comparison under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("AverageDelay (ms)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
-    print("\n--- Lambda Sweep Complete ---")
+    print("\n--- UE-Number Sweep Complete ---")
     for _, label in MODES:
-        for item in rho_results[label]:
+        for item in ue_results[label]:
             print(
-                f"{label}, arrival rate={item['rho']:.4f}: "
+                f"{label}, NUM_UE={item['num_ue']}: "
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
                 f"avg_delay_ms={item['average_delay_ms']:.2f}"
@@ -125,22 +126,22 @@ if RUN_ALL:
             )
     raise SystemExit
 
-if RHO_SWEEP_PB:
-    NUM_UE = 10000
+if UE_SWEEP_PB:
     SECONDS = SIM_SECONDS
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
     MODE = [1, 1]
-    RHO_VALUES = SIM_RHO_VALUES
+    RHO = SIM_RHO
+    NUM_UE_VALUES = SIM_NUM_UE_VALUES
 
     pb_results = []
-    for rho in RHO_VALUES:
-        print(f"\nRunning p_b arrival-rate sweep: rho_s={rho}")
+    for num_ue in NUM_UE_VALUES:
+        print(f"\nRunning p_b UE-number sweep: NUM_UE={num_ue}")
         avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
-            rho,
+            RHO,
             SECONDS,
-            NUM_UE,
+            num_ue,
             MODE,
             SEED,
             IMBALANCE_EPSILON,
@@ -156,14 +157,14 @@ if RHO_SWEEP_PB:
             average_p_b[:state_count] = np.mean(p_b_history[:, :state_count], axis=0)
 
         pb_results.append({
-            "rho": rho,
+            "num_ue": num_ue,
             "average_p_b": average_p_b,
             "plr": plr,
             "throughput": avg_throughput,
             "final_n_estimate": n_history[-1] if len(n_history) > 0 else np.nan,
         })
 
-    rho_axis = np.array([item["rho"] for item in pb_results])
+    ue_axis = np.array([item["num_ue"] for item in pb_results])
     average_p_b_matrix = np.vstack([item["average_p_b"] for item in pb_results])
 
     plt.figure(figsize=(10, 6))
@@ -174,12 +175,12 @@ if RHO_SWEEP_PB:
     cbar.set_label(r"Avg. $\mathbf{p}_b$")
 
     for state_idx in range(heatmap_data.shape[0]):
-        for rho_idx in range(heatmap_data.shape[1]):
-            value = heatmap_data[state_idx, rho_idx]
+        for ue_idx in range(heatmap_data.shape[1]):
+            value = heatmap_data[state_idx, ue_idx]
             if np.isfinite(value):
                 text_color = "white" if value >= 0.55 else "black"
                 plt.text(
-                    rho_idx,
+                    ue_idx,
                     state_idx,
                     f"{value:.3f}",
                     ha="center",
@@ -188,22 +189,22 @@ if RHO_SWEEP_PB:
                     fontsize=9,
                 )
 
-    plt.title(r"Average $\mathbf{p}_b$ vs. $\rho_s$")
-    plt.xlabel(r"$\rho_s$ (packets/s)")
+    plt.title(r"Average $\mathbf{p}_b$ vs. Number of UEs")
+    plt.xlabel("Number of UEs")
     plt.ylabel("State")
-    plt.xticks(np.arange(len(rho_axis)), [f"{rho:g}" for rho in rho_axis])
+    plt.xticks(np.arange(len(ue_axis)), [f"{num_ue:g}" for num_ue in ue_axis])
     plt.yticks(np.arange(5), [f"State {idx}" for idx in range(1, 6)])
     plt.tight_layout()
     plt.show()
 
-    print("\n--- Rho Sweep p_b Complete ---")
+    print("\n--- UE-Number Sweep p_b Complete ---")
     for item in pb_results:
         pb_summary = ", ".join(
             f"State {idx + 1}={value:.6f}"
             for idx, value in enumerate(item["average_p_b"])
         )
         print(
-            f"rho_s={item['rho']:.4f}: "
+            f"NUM_UE={item['num_ue']}: "
             f"average_p_b=[{pb_summary}], "
             f"PLR={item['plr']:.4f}, "
             f"throughput={item['throughput']:.2f}, "
@@ -217,7 +218,7 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO = 1.0
+    RHO = SIM_RHO
     # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
         ([6, 1], "Proposed / Proposed"),
@@ -286,13 +287,13 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
             )
     raise SystemExit
 
-if RUN_RHO_SWEEP:
-    NUM_UE = 10000
+if RUN_UE_SWEEP:
     SECONDS = SIM_SECONDS
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = SIM_RHO_VALUES
+    RHO = SIM_RHO
+    NUM_UE_VALUES = SIM_NUM_UE_VALUES
     MODES = [
         ([6, 1], "Proposed"),
         ([6, 2], "DACB"),
@@ -301,22 +302,22 @@ if RUN_RHO_SWEEP:
 
     # Backoff settings 2 and 3 are ACB baselines; all other experiment parameters are
     # kept identical to the proposed setting so the PLR curves isolate the backoff controller.
-    rho_results = {label: [] for _, label in MODES}
+    ue_results = {label: [] for _, label in MODES}
     for mode, label in MODES:
-        for rho in RHO_VALUES:
-            print(f"\nRunning PLR arrival-rate sweep: {label}, arrival rate={rho}")
+        for num_ue in NUM_UE_VALUES:
+            print(f"\nRunning PLR UE-number sweep: {label}, NUM_UE={num_ue}")
             avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
-                rho,
+                RHO,
                 SECONDS,
-                NUM_UE,
+                num_ue,
                 mode,
                 SEED,
                 IMBALANCE_EPSILON,
                 USE_REAL_PS=USE_REAL_PS,
             )
             final_n_estimate = n_history[-1] if len(n_history) > 0 else np.nan
-            rho_results[label].append({
-                "rho": rho,
+            ue_results[label].append({
+                "num_ue": num_ue,
                 "plr": plr,
                 "throughput": avg_throughput,
                 "average_delay_ms": run_history.get("average_delay_ms", np.nan),
@@ -325,11 +326,11 @@ if RUN_RHO_SWEEP:
 
     plt.figure(figsize=(10, 6))
     for _, label in MODES:
-        rho_axis = np.array([item["rho"] for item in rho_results[label]])
-        plr_values = np.array([item["plr"] for item in rho_results[label]])
-        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=label)
-    plt.title("PLR Comparison under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+        ue_axis = np.array([item["num_ue"] for item in ue_results[label]])
+        plr_values = np.array([item["plr"] for item in ue_results[label]])
+        plt.plot(ue_axis, plr_values, marker="o", linewidth=1.6, label=label)
+    plt.title("PLR Comparison under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("Packet Loss Rate")
     plt.grid(True, alpha=0.3)
     plt.legend()
@@ -338,11 +339,11 @@ if RUN_RHO_SWEEP:
 
     plt.figure(figsize=(10, 6))
     for _, label in MODES:
-        rho_axis = np.array([item["rho"] for item in rho_results[label]])
-        throughput_values = np.array([item["throughput"] for item in rho_results[label]])
-        plt.plot(rho_axis, throughput_values, marker="o", linewidth=1.6, label=label)
-    plt.title("Throughput Comparison under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+        ue_axis = np.array([item["num_ue"] for item in ue_results[label]])
+        throughput_values = np.array([item["throughput"] for item in ue_results[label]])
+        plt.plot(ue_axis, throughput_values, marker="o", linewidth=1.6, label=label)
+    plt.title("Throughput Comparison under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("Average Throughput (packets/second)")
     plt.grid(True, alpha=0.3)
     plt.legend()
@@ -351,22 +352,22 @@ if RUN_RHO_SWEEP:
 
     plt.figure(figsize=(10, 6))
     for _, label in MODES:
-        rho_axis = np.array([item["rho"] for item in rho_results[label]])
-        delay_values = np.array([item["average_delay_ms"] for item in rho_results[label]])
-        plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=label)
-    plt.title("AverageDelay Comparison under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+        ue_axis = np.array([item["num_ue"] for item in ue_results[label]])
+        delay_values = np.array([item["average_delay_ms"] for item in ue_results[label]])
+        plt.plot(ue_axis, delay_values, marker="o", linewidth=1.6, label=label)
+    plt.title("AverageDelay Comparison under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("AverageDelay (ms)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
-    print("\n--- Lambda Sweep Complete ---")
+    print("\n--- UE-Number Sweep Complete ---")
     for _, label in MODES:
-        for item in rho_results[label]:
+        for item in ue_results[label]:
             print(
-                f"{label}, arrival rate={item['rho']:.4f}: "
+                f"{label}, NUM_UE={item['num_ue']}: "
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
                 f"avg_delay_ms={item['average_delay_ms']:.2f}"
@@ -375,11 +376,11 @@ if RUN_RHO_SWEEP:
     raise SystemExit
 
 if RUN_FIXED_LOAD_IMBALANCE_SWEEP:
-    NUM_UE = 10000
     SECONDS = SIM_SECONDS
     SEED = 42
     USE_REAL_PS = False
-    RHO_VALUES = SIM_RHO_VALUES
+    RHO = SIM_RHO
+    NUM_UE_VALUES = SIM_NUM_UE_VALUES
 
     def epsilon_plot_label(epsilon):
         exponent = np.log10(epsilon) if epsilon > 0 else np.nan
@@ -405,22 +406,22 @@ if RUN_FIXED_LOAD_IMBALANCE_SWEEP:
 
     constraint_results = {plot_label: [] for _, plot_label, _, _ in EXPERIMENTS}
     for mode, plot_label, text_label, epsilon in EXPERIMENTS:
-        for rho in RHO_VALUES:
+        for num_ue in NUM_UE_VALUES:
             print(
                 f"\nRunning load-imbalance constraint sweep: "
-                f"{text_label}, arrival rate={rho}"
+                f"{text_label}, NUM_UE={num_ue}"
             )
             avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
-                rho,
+                RHO,
                 SECONDS,
-                NUM_UE,
+                num_ue,
                 mode,
                 SEED,
                 epsilon,
                 USE_REAL_PS=USE_REAL_PS,
             )
             constraint_results[plot_label].append({
-                "rho": rho,
+                "num_ue": num_ue,
                 "text_label": text_label,
                 "epsilon": epsilon,
                 "plr": plr,
@@ -431,11 +432,11 @@ if RUN_FIXED_LOAD_IMBALANCE_SWEEP:
 
     plt.figure(figsize=(10, 6))
     for _, plot_label, _, _ in EXPERIMENTS:
-        rho_axis = np.array([item["rho"] for item in constraint_results[plot_label]])
+        ue_axis = np.array([item["num_ue"] for item in constraint_results[plot_label]])
         plr_values = np.array([item["plr"] for item in constraint_results[plot_label]])
-        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=plot_label)
+        plt.plot(ue_axis, plr_values, marker="o", linewidth=1.6, label=plot_label)
     plt.title("PLR under Fixed and Adaptive Load-Imbalance Constraints")
-    plt.xlabel("Arrival rate (packets/s)")
+    plt.xlabel("Number of UEs")
     plt.ylabel("Packet Loss Rate")
     plt.grid(True, alpha=0.3)
     plt.legend()
@@ -446,7 +447,7 @@ if RUN_FIXED_LOAD_IMBALANCE_SWEEP:
     for _, plot_label, _, _ in EXPERIMENTS:
         for item in constraint_results[plot_label]:
             print(
-                f"{item['text_label']}, arrival rate={item['rho']:.4f}: "
+                f"{item['text_label']}, NUM_UE={item['num_ue']}: "
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
                 f"avg_delay_ms={item['average_delay_ms']:.2f}, "
@@ -455,12 +456,12 @@ if RUN_FIXED_LOAD_IMBALANCE_SWEEP:
     raise SystemExit
 
 if RUN_SATELLITE_SELECTION_SWEEP:
-    NUM_UE = 10000
     SECONDS = SIM_SECONDS
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO_VALUES = SIM_RHO_VALUES
+    RHO = SIM_RHO
+    NUM_UE_VALUES = SIM_NUM_UE_VALUES
 
     def epsilon_plot_label(epsilon):
         exponent = np.log10(epsilon) if epsilon > 0 else np.nan
@@ -496,15 +497,15 @@ if RUN_SATELLITE_SELECTION_SWEEP:
     # so the PLR curves isolate the satellite selection policy.
     selection_results = {label: [] for _, label, _ in EXPERIMENTS}
     for mode, label, extra_kwargs in EXPERIMENTS:
-        for rho in RHO_VALUES:
+        for num_ue in NUM_UE_VALUES:
             print(
-                f"\nRunning satellite selection arrival-rate sweep: "
-                f"{label}, arrival rate={rho}"
+                f"\nRunning satellite selection UE-number sweep: "
+                f"{label}, NUM_UE={num_ue}"
             )
             avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
-                rho,
+                RHO,
                 SECONDS,
-                NUM_UE,
+                num_ue,
                 mode,
                 SEED,
                 IMBALANCE_EPSILON,
@@ -513,7 +514,7 @@ if RUN_SATELLITE_SELECTION_SWEEP:
             )
             final_n_estimate = n_history[-1] if len(n_history) > 0 else np.nan
             selection_results[label].append({
-                "rho": rho,
+                "num_ue": num_ue,
                 "plr": plr,
                 "throughput": avg_throughput,
                 "average_delay_ms": run_history.get("average_delay_ms", np.nan),
@@ -522,11 +523,11 @@ if RUN_SATELLITE_SELECTION_SWEEP:
 
     plt.figure(figsize=(10, 6))
     for _, label, _ in EXPERIMENTS:
-        rho_axis = np.array([item["rho"] for item in selection_results[label]])
+        ue_axis = np.array([item["num_ue"] for item in selection_results[label]])
         plr_values = np.array([item["plr"] for item in selection_results[label]])
-        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=label)
-    plt.title("Satellite Selection PLR Comparison under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+        plt.plot(ue_axis, plr_values, marker="o", linewidth=1.6, label=label)
+    plt.title("Satellite Selection PLR Comparison under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("Packet Loss Rate")
     plt.grid(True, alpha=0.3)
     plt.legend()
@@ -535,11 +536,11 @@ if RUN_SATELLITE_SELECTION_SWEEP:
 
     plt.figure(figsize=(10, 6))
     for _, label, _ in EXPERIMENTS:
-        rho_axis = np.array([item["rho"] for item in selection_results[label]])
+        ue_axis = np.array([item["num_ue"] for item in selection_results[label]])
         throughput_values = np.array([item["throughput"] for item in selection_results[label]])
-        plt.plot(rho_axis, throughput_values, marker="o", linewidth=1.6, label=label)
-    plt.title("Satellite Selection Throughput Comparison under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+        plt.plot(ue_axis, throughput_values, marker="o", linewidth=1.6, label=label)
+    plt.title("Satellite Selection Throughput Comparison under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("Average Throughput (packets/second)")
     plt.grid(True, alpha=0.3)
     plt.legend()
@@ -548,22 +549,22 @@ if RUN_SATELLITE_SELECTION_SWEEP:
 
     plt.figure(figsize=(10, 6))
     for _, label, _ in EXPERIMENTS:
-        rho_axis = np.array([item["rho"] for item in selection_results[label]])
+        ue_axis = np.array([item["num_ue"] for item in selection_results[label]])
         delay_values = np.array([item["average_delay_ms"] for item in selection_results[label]])
-        plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=label)
-    plt.title("Satellite Selection AverageDelay Comparison under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+        plt.plot(ue_axis, delay_values, marker="o", linewidth=1.6, label=label)
+    plt.title("Satellite Selection AverageDelay Comparison under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("AverageDelay (ms)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
-    print("\n--- Satellite Selection Lambda Sweep Complete ---")
+    print("\n--- Satellite Selection UE-Number Sweep Complete ---")
     for _, label, _ in EXPERIMENTS:
         for item in selection_results[label]:
             print(
-                f"{label}, arrival rate={item['rho']:.4f}: "
+                f"{label}, NUM_UE={item['num_ue']}: "
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
                 f"avg_delay_ms={item['average_delay_ms']:.2f}, "
@@ -571,23 +572,23 @@ if RUN_SATELLITE_SELECTION_SWEEP:
             )
     raise SystemExit
 
-if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
-    NUM_UE = 10000
+if RUN_ESTIMATION_VALIDATION_UE_SWEEP:
     SECONDS = SIM_SECONDS
     SEED = 42
     MODE = [6, 1]
     IMBALANCE_EPSILON = 0.01
     USE_REAL_PS = False
     ADAPTIVE_EPSILON_ALPHA = 2.0
-    RHO_VALUES = SIM_RHO_VALUES
+    RHO = SIM_RHO
+    NUM_UE_VALUES = SIM_NUM_UE_VALUES
 
     validation_results = []
-    for rho in RHO_VALUES:
-        print(f"\nRunning estimation validation arrival-rate sweep: arrival rate={rho}")
+    for num_ue in NUM_UE_VALUES:
+        print(f"\nRunning estimation validation UE-number sweep: NUM_UE={num_ue}")
         avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
-            rho,
+            RHO,
             SECONDS,
-            NUM_UE,
+            num_ue,
             MODE,
             SEED,
             IMBALANCE_EPSILON,
@@ -603,8 +604,8 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             ps_mae = np.nan
 
         final_n_estimate = n_history[-1] if len(n_history) > 0 else np.nan
-        n_signed_error = final_n_estimate - NUM_UE
-        n_abs_relative_error = abs(n_signed_error) / NUM_UE if np.isfinite(final_n_estimate) else np.nan
+        n_signed_error = final_n_estimate - num_ue
+        n_abs_relative_error = abs(n_signed_error) / num_ue if np.isfinite(final_n_estimate) else np.nan
 
         pi_history = np.asarray(actual_pi, dtype=float)
         estimated_active_pi = np.asarray(observe_pi, dtype=float)
@@ -622,7 +623,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             pi_error_by_state = np.full(state_count, np.nan)
 
         validation_results.append({
-            "rho": rho,
+            "num_ue": num_ue,
             "plr": plr,
             "throughput": avg_throughput,
             "ps_mae": ps_mae,
@@ -632,18 +633,18 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             "pi_error_by_state": pi_error_by_state,
         })
 
-    rho_axis = np.array([item["rho"] for item in validation_results])
+    ue_axis = np.array([item["num_ue"] for item in validation_results])
 
     plt.figure(figsize=(10, 6))
     plt.plot(
-        rho_axis,
+        ue_axis,
         np.array([item["ps_mae"] for item in validation_results]),
         marker="o",
         linewidth=1.6,
         color="#3498db",
     )
-    plt.title("Successful Transmission Probability Error under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+    plt.title("Successful Transmission Probability Error under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("Mean absolute error")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -658,7 +659,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
         )
         for item in validation_results
     ])
-    x = np.arange(len(rho_axis))
+    x = np.arange(len(ue_axis))
     bar_width = 0.8 / max_state_count
 
     plt.figure(figsize=(11, 6))
@@ -672,10 +673,10 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             label=state_label,
         )
     plt.axhline(y=0.0, color="black", linestyle="--", linewidth=1.0, alpha=0.6)
-    plt.title("State Probability Estimation Error under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+    plt.title("State Probability Estimation Error under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("Mean error (estimated minus true)")
-    plt.xticks(x, [f"{rho:g}" for rho in rho_axis])
+    plt.xticks(x, [f"{num_ue:g}" for num_ue in ue_axis])
     plt.grid(True, axis="y", alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -683,27 +684,27 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
 
     plt.figure(figsize=(10, 6))
     plt.plot(
-        rho_axis,
+        ue_axis,
         np.array([item["n_abs_relative_error"] for item in validation_results]) * 100.0,
         marker="o",
         linewidth=1.6,
         color="#8e44ad",
     )
-    plt.title("Final UE Number Estimation Error under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
+    plt.title("Final UE Number Estimation Error under Different UE Numbers")
+    plt.xlabel("Number of UEs")
     plt.ylabel("Final absolute relative error (%)")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
 
-    print("\n--- Estimation Validation Rho Sweep Complete ---")
+    print("\n--- Estimation Validation UE-Number Sweep Complete ---")
     for item in validation_results:
         pi_summary = ", ".join(
             f"{'Idle' if idx == 0 else f'State {idx}'}={value:.6f}"
             for idx, value in enumerate(item["pi_error_by_state"])
         )
         print(
-            f"arrival rate={item['rho']:.4f}: "
+            f"NUM_UE={item['num_ue']}: "
             f"p_s_MAE={item['ps_mae']:.6f}, "
             f"true_system_PLR={item['plr']:.4f}, "
             f"final_N={item['final_n_estimate']:.2f}, "
@@ -720,16 +721,16 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
     USE_REAL_PS = False
     FIXED_EPSILON_MODE = [1, 1]
     ADAPTIVE_EPSILON_MODE = [6, 1]
-    FIXED_EPSILON_RHO = 1.0
+    RHO = SIM_RHO
     FIXED_EPSILON_VALUES = [1e-4, 1e-3, 1e-2, 1e-1]
-    ADAPTIVE_EPSILON_RHO_VALUES = SIM_RHO_VALUES
+    ADAPTIVE_EPSILON_NUM_UE_VALUES = SIM_NUM_UE_VALUES
     ADAPTIVE_EPSILON_ALPHA = 2.0
 
     fixed_epsilon_results = []
     for eps in FIXED_EPSILON_VALUES:
         print(f"\nRunning fixed-epsilon satellite selection performance: epsilon={eps}")
         avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
-            FIXED_EPSILON_RHO,
+            RHO,
             SECONDS,
             NUM_UE,
             FIXED_EPSILON_MODE,
@@ -765,12 +766,12 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
     plt.show()
 
     adaptive_epsilon_results = []
-    for rho in ADAPTIVE_EPSILON_RHO_VALUES:
-        print(f"\nRunning adaptive-epsilon trajectory: arrival rate={rho}")
+    for num_ue in ADAPTIVE_EPSILON_NUM_UE_VALUES:
+        print(f"\nRunning adaptive-epsilon trajectory: NUM_UE={num_ue}")
         avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
-            rho,
+            RHO,
             SECONDS,
-            NUM_UE,
+            num_ue,
             ADAPTIVE_EPSILON_MODE,
             SEED,
             IMBALANCE_EPSILON=0.01,
@@ -780,7 +781,7 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
         epsilon_history = run_history.get("adaptive_epsilon_history", [])
         epsilon_values = np.array([item["epsilon"] for item in epsilon_history], dtype=float)
         adaptive_epsilon_results.append({
-            "rho": rho,
+            "num_ue": num_ue,
             "epsilon_values": epsilon_values,
             "plr": plr,
             "throughput": avg_throughput,
@@ -795,9 +796,9 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
             np.arange(len(epsilon_values)),
             epsilon_values,
             linewidth=1.4,
-            label=rf"$\rho_s={item['rho']:g}$",
+            label=rf"$N_{{UE}}={item['num_ue']}$",
         )
-    plt.title("Adaptive Imbalance Epsilon under Different Arrival Rates")
+    plt.title("Adaptive Imbalance Epsilon under Different UE Numbers")
     plt.xlabel("Time Slot (n)")
     plt.ylabel(r"Adaptive imbalance threshold $\epsilon^m$")
     plt.grid(True, alpha=0.3)
@@ -816,7 +817,7 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
     for item in adaptive_epsilon_results:
         final_epsilon = item["epsilon_values"][-1] if len(item["epsilon_values"]) > 0 else np.nan
         print(
-            f"adaptive arrival rate={item['rho']:.4f}: "
+            f"adaptive NUM_UE={item['num_ue']}: "
             f"final_epsilon={final_epsilon:.6g}, "
             f"PLR={item['plr']:.4f}, "
             f"throughput={item['throughput']:.2f}"
@@ -826,7 +827,7 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
 if epsilon_sweep:
     # Epsilon sweep for convex group satellite selection.
     EPSILON_VALUES = [0.0, 1e-4, 1e-3, 1e-2, 1e-1]
-    EPSILON_RHO = 1.0
+    EPSILON_RHO = SIM_RHO
     EPSILON_SECONDS = SIM_SECONDS
     EPSILON_NUM_UE = 10000
     EPSILON_MODE = [1, 1]
@@ -906,36 +907,36 @@ if epsilon_sweep:
 
 
 if RUN_ALLA_ETA_SWEEP:
-    NUM_UE = 10000
     SECONDS = SIM_SECONDS
     SEED = 42
-    RHO_VALUES = SIM_RHO_VALUES
+    RHO = SIM_RHO
+    NUM_UE_VALUES = SIM_NUM_UE_VALUES
     MODE = [5, 3]
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
     ETA_VALUES = np.array([0.5,1,2,4,8,16])
 
     eta_results = {}
-    for rho in RHO_VALUES:
-        eta_results[rho] = []
+    for num_ue in NUM_UE_VALUES:
+        eta_results[num_ue] = []
         for eta in ETA_VALUES:
-            print(f"\nRunning ALLA eta sweep: rho={rho:g}, eta={eta:g}")
+            print(f"\nRunning ALLA eta sweep: NUM_UE={num_ue}, eta={eta:g}")
             _, plr, _, _, _, _, _ = main.main(
-                rho,
+                RHO,
                 SECONDS,
-                NUM_UE,
+                num_ue,
                 MODE,
                 SEED,
                 IMBALANCE_EPSILON,
                 USE_REAL_PS=USE_REAL_PS,
                 LOAD_AWARE_ETA=eta,
             )
-            eta_results[rho].append(plr)
+            eta_results[num_ue].append(plr)
 
     plt.figure(figsize=(10, 6))
-    for rho in RHO_VALUES:
-        plt.plot(ETA_VALUES, eta_results[rho], marker="o", label=rf"$\rho_s={rho:g}$")
-    plt.title(r"ALLA PLR under Different $\eta$ and Loads")
+    for num_ue in NUM_UE_VALUES:
+        plt.plot(ETA_VALUES, eta_results[num_ue], marker="o", label=rf"$N_{{UE}}={num_ue}$")
+    plt.title(r"ALLA PLR under Different $\eta$ and UE Numbers")
     plt.xlabel(r"ALLA $\eta$")
     plt.ylabel("Packet Loss Rate")
     plt.xscale("log")
@@ -945,9 +946,9 @@ if RUN_ALLA_ETA_SWEEP:
     plt.show()
 
     print("\n--- ALLA Eta Sweep Complete ---")
-    for rho in RHO_VALUES:
-        for eta, plr in zip(ETA_VALUES, eta_results[rho]):
-            print(f"rho={rho:g}, eta={eta:g}: PLR={plr:.4f}")
+    for num_ue in NUM_UE_VALUES:
+        for eta, plr in zip(ETA_VALUES, eta_results[num_ue]):
+            print(f"NUM_UE={num_ue}, eta={eta:g}: PLR={plr:.4f}")
     raise SystemExit
 
 
@@ -958,7 +959,7 @@ USE_REAL_PS = False
 result_key = "Proposed"
 results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(1.2, SIM_SECONDS, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
+a, b, c, d, e, f, g = main.main(SIM_RHO, SIM_SECONDS, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
 load_variance_history = -np.asarray(f, dtype=float)
 
 results[result_key] = {
