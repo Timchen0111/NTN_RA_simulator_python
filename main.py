@@ -896,7 +896,7 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
         print(f"VU ps table shape: {mode3_visible_random_ps_table.shape}")
     return group_weight_table, group_ps_table, mode3_visible_random_ps_table
 
-def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=1.0, LOAD_AWARE_LOAD_EMA_BETA=0.2, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=2.0, ADAPTIVE_EPSILON_BETA=0.2, QOS_DISTRIBUTION=None):
+def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=4.0, LOAD_AWARE_LOAD_EMA_BETA=0.2, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=2.0, ADAPTIVE_EPSILON_BETA=0.2, QOS_DISTRIBUTION=None):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
     if MODE == 0:
@@ -1073,7 +1073,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
             current_n_hat = ctrl.N_estimate
         # Mode 5 smooths the latest available load report before making the
         # current RAO's load-and-link-aware satellite selection decision.
-        if selection_mode == 5:
+        if selection_mode == 100: #original 5 but removing it currently
             ctrl.update_load_aware_load_indicator(Lambda, LOAD_AWARE_LOAD_EMA_BETA)
         else:
             ctrl.last_load_indicator = Lambda.copy()

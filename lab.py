@@ -3,8 +3,8 @@ import numpy as np
 
 import main
 
-EXPERIMENT_CODE = 6
-SIM_SECONDS = 10
+EXPERIMENT_CODE = 4
+SIM_SECONDS = 180
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 EXPERIMENT_SWITCHES = {
     0: "SINGLE_RUN",
@@ -105,9 +105,9 @@ if RUN_ALL:
         rho_axis = np.array([item["rho"] for item in rho_results[label]])
         delay_values = np.array([item["average_delay_ms"] for item in rho_results[label]])
         plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=label)
-    plt.title("AverageDelay Comparison under Different Arrival Rates")
+    plt.title("Average Delay Comparison under Different Arrival Rates")
     plt.xlabel("Arrival rate (packets/s)")
-    plt.ylabel("AverageDelay (ms)")
+    plt.ylabel("Average Delay (ms)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -353,9 +353,9 @@ if RUN_RHO_SWEEP:
         rho_axis = np.array([item["rho"] for item in rho_results[label]])
         delay_values = np.array([item["average_delay_ms"] for item in rho_results[label]])
         plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=label)
-    plt.title("AverageDelay Comparison under Different Arrival Rates")
+    plt.title("Average Delay Comparison under Different Arrival Rates")
     plt.xlabel("Arrival rate (packets/s)")
-    plt.ylabel("AverageDelay (ms)")
+    plt.ylabel("Average Delay (ms)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -550,9 +550,9 @@ if RUN_SATELLITE_SELECTION_SWEEP:
         rho_axis = np.array([item["rho"] for item in selection_results[label]])
         delay_values = np.array([item["average_delay_ms"] for item in selection_results[label]])
         plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=label)
-    plt.title("Satellite Selection AverageDelay Comparison under Different Arrival Rates")
+    plt.title("Satellite Selection Average Delay Comparison under Different Arrival Rates")
     plt.xlabel("Arrival rate (packets/s)")
-    plt.ylabel("AverageDelay (ms)")
+    plt.ylabel("Average Delay (ms)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -876,7 +876,7 @@ if epsilon_sweep:
 
     plt.figure(figsize=(10, 6))
     plt.plot(epsilon_labels, epsilon_delay, marker="o", color="#8e44ad")
-    plt.title("AverageDelay under Imbalance Epsilon")
+    plt.title("  under Imbalance Epsilon")
     plt.xlabel("Imbalance epsilon")
     plt.ylabel("ms")
     plt.grid(True, linestyle=":", alpha=0.6)
@@ -974,7 +974,7 @@ single_throughput = results[result_key]["Loads"]
 single_delay_ms = results[result_key]["RunHistory"].get("average_delay_ms", np.nan)
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-fig.suptitle(f"Throughput and AverageDelay - {result_key}", fontsize=14)
+fig.suptitle(f"Throughput and Average Delay - {result_key}", fontsize=14)
 
 axes[0].bar([result_key], [single_throughput], color="#27ae60")
 axes[0].set_title("Average Throughput")
@@ -982,7 +982,7 @@ axes[0].set_ylabel("Packets / Second")
 axes[0].grid(True, axis="y", alpha=0.3)
 
 axes[1].bar([result_key], [single_delay_ms], color="#8e44ad")
-axes[1].set_title("AverageDelay")
+axes[1].set_title("Average Delay")
 axes[1].set_ylabel("ms")
 axes[1].grid(True, axis="y", alpha=0.3)
 
@@ -1151,6 +1151,6 @@ elif m[1] == 1:
 print("--- Test Complete ---")
 print(f"Packet Loss Rate: {results[result_key]['SuccessRate']:.4f}")
 print(f"Average Throughput: {single_throughput:.2f}")
-print(f"AverageDelay (ms): {single_delay_ms:.2f}")
+print(f"Average Delay (ms): {single_delay_ms:.2f}")
 if m[1] == 1:
     print(f"p_s MAE: {ps_mae:.6f}" if np.isfinite(ps_mae) else "p_s MAE: N/A")
