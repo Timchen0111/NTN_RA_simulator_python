@@ -3,9 +3,9 @@ import numpy as np
 
 import main
 
-EXPERIMENT_CODE = 4
-SIM_SECONDS = 180
-SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
+EXPERIMENT_CODE = 6
+SIM_SECONDS = 10
+SIM_RHO_VALUES = np.array([1.0,3.0])
 EXPERIMENT_SWITCHES = {
     0: "SINGLE_RUN",
     1: "RUN_ALL",
@@ -519,18 +519,60 @@ if RUN_SATELLITE_SELECTION_SWEEP:
                 "final_n_estimate": final_n_estimate,
             })
 
-    plt.figure(figsize=(10, 6))
-    for _, label, _ in EXPERIMENTS:
-        rho_axis = np.array([item["rho"] for item in selection_results[label]])
-        plr_values = np.array([item["plr"] for item in selection_results[label]])
-        plt.plot(rho_axis, plr_values, marker="o", linewidth=1.6, label=label)
-    plt.title("Satellite Selection PLR Comparison under Different Arrival Rates")
-    plt.xlabel("Arrival rate (packets/s)")
-    plt.ylabel("Packet Loss Rate")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
+    plr_by_label = {
+        label: np.array([item["plr"] for item in selection_results[label]])
+        for _, label, _ in EXPERIMENTS
+    }
+    rho_axis = np.array([item["rho"] for item in selection_results[EXPERIMENTS[0][1]]])
+    normal_plr = np.concatenate([
+        values for label, values in plr_by_label.items() if label != "LLA"
+    ])
+    lla_plr = plr_by_label["LLA"]
+
+    if np.min(lla_plr) > np.max(normal_plr):
+        fig, (ax_high, ax_low) = plt.subplots(
+            2, 1, sharex=True, figsize=(10, 6),
+            gridspec_kw={"height_ratios": [1, 2], "hspace": 0.05},
+        )
+        for _, label, _ in EXPERIMENTS:
+            for axis in (ax_high, ax_low):
+                axis.plot(rho_axis, plr_by_label[label], marker="o", linewidth=1.6, label=label)
+
+        gap = np.min(lla_plr) - np.max(normal_plr)
+        normal_pad = max(0.01, 0.1 * np.ptp(normal_plr))
+        lla_pad = max(0.01, 0.1 * np.ptp(lla_plr))
+        ax_low.set_ylim(max(0.0, np.min(normal_plr) - normal_pad), np.max(normal_plr) + 0.2 * gap)
+        ax_high.set_ylim(np.min(lla_plr) - 0.2 * gap, min(1.0, np.max(lla_plr) + lla_pad))
+        ax_high.spines["bottom"].set_visible(False)
+        ax_low.spines["top"].set_visible(False)
+        ax_high.tick_params(labeltop=False, bottom=False)
+
+        diagonal = 0.008
+        for axis, y in ((ax_high, 0), (ax_low, 1)):
+            axis.plot((-diagonal, diagonal), (y - diagonal, y + diagonal),
+                      transform=axis.transAxes, color="black", clip_on=False)
+            axis.plot((1 - diagonal, 1 + diagonal), (y - diagonal, y + diagonal),
+                      transform=axis.transAxes, color="black", clip_on=False)
+
+        ax_high.grid(True, alpha=0.3)
+        ax_low.grid(True, alpha=0.3)
+        ax_high.legend()
+        fig.suptitle("Satellite Selection PLR Comparison under Different Arrival Rates")
+        fig.supxlabel("Arrival rate (packets/s)")
+        fig.supylabel("Packet Loss Rate")
+        plt.tight_layout()
+        plt.show()
+    else:
+        plt.figure(figsize=(10, 6))
+        for _, label, _ in EXPERIMENTS:
+            plt.plot(rho_axis, plr_by_label[label], marker="o", linewidth=1.6, label=label)
+        plt.title("Satellite Selection PLR Comparison under Different Arrival Rates")
+        plt.xlabel("Arrival rate (packets/s)")
+        plt.ylabel("Packet Loss Rate")
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
 
     plt.figure(figsize=(10, 6))
     for _, label, _ in EXPERIMENTS:
