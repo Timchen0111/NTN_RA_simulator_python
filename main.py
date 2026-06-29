@@ -351,6 +351,7 @@ class UE:
         self.load_aware_eta = 1.0
         self.acb_selection_count = 0
         self.acb_policy_fallback_count = 0
+        self.selected_satellite_id_this_rao = None
         self.geo = wgs84.latlon(self.location[0], self.location[1])
         # 此次 2026/6/9 凌晨 visibility 加速修改：UE 位置固定，先保存 ECEF 與 ENU 單位向量，避免每個 RAO 重複建立地面座標。
         self.lat_rad = np.deg2rad(self.location[0])
@@ -522,6 +523,8 @@ class UE:
 
     def execute_RA(self,target_sat):
         #實際傳輸 Preamble
+        # Record the UE-side selection before the channel outcome is known.
+        self.selected_satellite_id_this_rao = target_sat.id
         r = target_sat.receive_preamble(
             self.id,
             self.angle[target_sat.id],
@@ -1024,6 +1027,8 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     last_real_p_s = None
     ps_history = []
     p_b_history = []
+    offered_arrival_history = []
+    ue_satellite_selection_history = []
     for ue in ue_list:
         ue.acb_selection_count = 0
         ue.acb_policy_fallback_count = 0
@@ -1036,6 +1041,9 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     for n in range(RAO_COUNTS): #統一用n，表示現在是在第幾個RAO
         # --- 更新時間與產生封包 ---
         arrival_mask = np.random.rand(NUM_UE) < rho_rao
+        # Record the exogenous offered traffic before active-state and backoff
+        # gating so this metric remains independent of the control scheme.
+        offered_arrival_history.append(int(np.count_nonzero(arrival_mask)))
         for i, ue in enumerate(ue_list):
             ue.new_time(bursty=arrival_mask[i])
 
@@ -1073,7 +1081,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
             current_n_hat = ctrl.N_estimate
         # Mode 5 smooths the latest available load report before making the
         # current RAO's load-and-link-aware satellite selection decision.
-        if selection_mode == 100: #original 5 but removing it currently
+        if selection_mode == 5: #original 5 but removing it currently
             ctrl.update_load_aware_load_indicator(Lambda, LOAD_AWARE_LOAD_EMA_BETA)
         else:
             ctrl.last_load_indicator = Lambda.copy()
@@ -1131,6 +1139,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
                 print(f"Total Load (Lambda): {sum(Lambda)}, Backoff rate: {ctrl.p_b}", end='\n')
 
         for ue in ue_list:
+            ue.selected_satellite_id_this_rao = None
             if ue.active: #只對active的UE計算ACB和決定順序
                 ue.acquire_SIB(ctrl)
 
@@ -1144,6 +1153,32 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
             # 如果通過 ACB，會呼叫 sat.receive_preamble()
             if ue.active: 
                 ue.ACB_test()
+
+        selected_satellite_ids = [
+            ue.selected_satellite_id_this_rao
+            for ue in ue_list
+            if ue.selected_satellite_id_this_rao is not None
+        ]
+        selection_counts = np.bincount(
+            selected_satellite_ids,
+            minlength=ctrl.sat_num,
+        ).astype(int)
+        total_selections = int(np.sum(selection_counts))
+        if total_selections > 0:
+            most_selected_satellite = int(np.argmax(selection_counts))
+            highest_satellite_share = float(
+                selection_counts[most_selected_satellite] / total_selections
+            )
+        else:
+            most_selected_satellite = None
+            highest_satellite_share = np.nan
+        ue_satellite_selection_history.append({
+            "time_slot": n,
+            "selection_counts": selection_counts,
+            "total_selections": total_selections,
+            "most_selected_satellite": most_selected_satellite,
+            "highest_satellite_share": highest_satellite_share,
+        })
 
         # 中文註解：真實 p_s 定義為本輪實際嘗試 RA 的 UE 中，通道判定成功的比例；若本輪無嘗試則不計算。
         if backoff_mode == 1:
@@ -1245,6 +1280,9 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         "reward": np.mean(ctrl.history_reward),
         "ps_history": ps_history,
         "p_b_history": p_b_history,
+        "offered_arrival_history": offered_arrival_history,
+        "total_resources_kz": ctrl.sat_num * sat_list[0].Z,
+        "ue_satellite_selection_history": ue_satellite_selection_history,
         "adaptive_epsilon_history": ctrl.adaptive_epsilon_history,
         "load_aware_load_ema_history": ctrl.load_aware_load_ema_history,
         "selection_policy_variation_history": ctrl.selection_policy_variation_history,

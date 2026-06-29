@@ -3,9 +3,14 @@ import numpy as np
 
 import main
 
-EXPERIMENT_CODE = 6
-SIM_SECONDS = 10
-SIM_RHO_VALUES = np.array([1.0,3.0])
+EXPERIMENT_CODE = 12
+SIM_SECONDS = 180
+SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
+# Kept separate because this diagnostic intentionally spans a much wider load
+# range than the rho values used by the comparison experiments.
+OFFERED_LOAD_RHO_VALUES = np.array(
+    [0.1,0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0]
+)
 EXPERIMENT_SWITCHES = {
     0: "SINGLE_RUN",
     1: "RUN_ALL",
@@ -18,6 +23,8 @@ EXPERIMENT_SWITCHES = {
     8: "RUN_SATELLITE_SELECTION_PERFORMANCE",
     9: "epsilon_sweep",
     10: "RUN_ALLA_ETA_SWEEP",
+    11: "RUN_OFFERED_LOAD_RHO_SWEEP",
+    12: "RUN_SATELLITE_SELECTION_CONCENTRATION",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -32,6 +39,8 @@ RUN_ESTIMATION_VALIDATION_RHO_SWEEP = EXPERIMENT_CODE == 7
 RUN_SATELLITE_SELECTION_PERFORMANCE = EXPERIMENT_CODE == 8 #Different epsilon values
 epsilon_sweep = EXPERIMENT_CODE == 9
 RUN_ALLA_ETA_SWEEP = EXPERIMENT_CODE == 10
+RUN_OFFERED_LOAD_RHO_SWEEP = EXPERIMENT_CODE == 11
+RUN_SATELLITE_SELECTION_CONCENTRATION = EXPERIMENT_CODE == 12
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -989,6 +998,209 @@ if RUN_ALLA_ETA_SWEEP:
     for rho in RHO_VALUES:
         for eta, plr in zip(ETA_VALUES, eta_results[rho]):
             print(f"rho={rho:g}, eta={eta:g}: PLR={plr:.4f}")
+    raise SystemExit
+
+
+if RUN_OFFERED_LOAD_RHO_SWEEP:
+    NUM_UE = 10000
+    SECONDS = SIM_SECONDS
+    SEED = 42
+    MODE = [6, 1]
+    IMBALANCE_EPSILON = 0.01
+    USE_REAL_PS = False
+
+    offered_load_results = []
+    for rho in OFFERED_LOAD_RHO_VALUES:
+        print(f"\nRunning normalized offered-load sweep: rho_s={rho:g}")
+        _, _, _, _, _, _, run_history = main.main(
+            rho,
+            SECONDS,
+            NUM_UE,
+            MODE,
+            SEED,
+            IMBALANCE_EPSILON,
+            USE_REAL_PS=USE_REAL_PS,
+        )
+        offered_arrival_history = np.asarray(
+            run_history.get("offered_arrival_history", []),
+            dtype=float,
+        )
+        total_resources_kz = float(run_history.get("total_resources_kz", np.nan))
+        if len(offered_arrival_history) > 0 and total_resources_kz > 0:
+            average_normalized_offered_load = float(
+                np.mean(offered_arrival_history / total_resources_kz)
+            )
+        else:
+            average_normalized_offered_load = np.nan
+        offered_load_results.append({
+            "rho": rho,
+            "average_normalized_offered_load": average_normalized_offered_load,
+            "average_offered_packets_per_rao": (
+                float(np.mean(offered_arrival_history))
+                if len(offered_arrival_history) > 0
+                else np.nan
+            ),
+            "total_resources_kz": total_resources_kz,
+        })
+
+    rho_axis = np.array([item["rho"] for item in offered_load_results])
+    normalized_offered_load_values = np.array([
+        item["average_normalized_offered_load"]
+        for item in offered_load_results
+    ])
+
+    plt.figure(figsize=(10, 6), dpi=120)
+    plt.plot(
+        rho_axis,
+        normalized_offered_load_values,
+        marker="o",
+        linewidth=1.8,
+        color="#2980b9",
+        label="Normalized offered load",
+    )
+    plt.axhline(
+        1.0,
+        color="#c0392b",
+        linestyle="--",
+        linewidth=1.2,
+        label="Full resource utilization",
+    )
+    if len(SIM_RHO_VALUES) > 0:
+        comparison_min = float(np.min(SIM_RHO_VALUES))
+        comparison_max = float(np.max(SIM_RHO_VALUES))
+        plt.axvspan(
+            comparison_min,
+            comparison_max,
+            color="#f1c40f",
+            alpha=0.16,
+            label=(
+                f"Selected comparison range: "
+                f"{comparison_min:g} to {comparison_max:g} packets/s"
+            ),
+        )
+    plt.title("Average Normalized Offered Load")
+    plt.xlabel("Per-UE arrival rate (packets/s)")
+    plt.ylabel("Normalized offered load")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- Normalized Offered-Load Sweep Complete ---")
+    for item in offered_load_results:
+        print(
+            f"rho_s={item['rho']:g}: "
+            f"average_offered_packets_per_RAO="
+            f"{item['average_offered_packets_per_rao']:.4f}, "
+            f"KZ={item['total_resources_kz']:.0f}, "
+            f"average_offered_load_over_KZ="
+            f"{item['average_normalized_offered_load']:.6f}"
+        )
+    raise SystemExit
+
+
+if RUN_SATELLITE_SELECTION_CONCENTRATION:
+    NUM_UE = 10000
+    SECONDS = SIM_SECONDS
+    SEED = 42
+    RHO = 1.5
+    IMBALANCE_EPSILON = 0.001
+    USE_REAL_PS = False
+    BACKOFF_MODE = 3
+    EXPERIMENTS = [
+        ([6, BACKOFF_MODE], "Proposed"),
+        ([3, BACKOFF_MODE], "VU"),
+        #([4, BACKOFF_MODE], "HE"),
+        ([5, BACKOFF_MODE], "ALLA"),
+        ([7, BACKOFF_MODE], "LLA"),
+    ]
+
+    concentration_results = {}
+    for mode, label in EXPERIMENTS:
+        print(
+            f"\nRunning UE satellite-selection concentration analysis: "
+            f"{label}, arrival rate={RHO:g}"
+        )
+        _, _, _, _, _, _, run_history = main.main(
+            RHO,
+            SECONDS,
+            NUM_UE,
+            mode,
+            SEED,
+            IMBALANCE_EPSILON,
+            USE_REAL_PS=USE_REAL_PS,
+        )
+        selection_history = run_history.get(
+            "ue_satellite_selection_history",
+            [],
+        )
+        concentration_results[label] = {
+            "rao_index": np.array(
+                [item["time_slot"] for item in selection_history],
+                dtype=int,
+            ),
+            "highest_satellite_share": np.array(
+                [item["highest_satellite_share"] for item in selection_history],
+                dtype=float,
+            ),
+            "total_selections": np.array(
+                [item["total_selections"] for item in selection_history],
+                dtype=int,
+            ),
+            "most_selected_satellite": np.array(
+                [
+                    item["most_selected_satellite"]
+                    if item["most_selected_satellite"] is not None
+                    else -1
+                    for item in selection_history
+                ],
+                dtype=int,
+            ),
+        }
+
+    plt.figure(figsize=(11, 6), dpi=120)
+    for _, label in EXPERIMENTS:
+        item = concentration_results[label]
+        plt.plot(
+            item["rao_index"],
+            item["highest_satellite_share"],
+            linewidth=1.5,
+            label=label,
+        )
+    plt.title("Maximum Satellite Selection Share over Time")
+    plt.xlabel("RAO index")
+    plt.ylabel("Highest satellite selection share")
+    plt.ylim(0.0, 1.02)
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- Satellite Selection Concentration Analysis Complete ---")
+    for _, label in EXPERIMENTS:
+        item = concentration_results[label]
+        valid_mask = np.isfinite(item["highest_satellite_share"])
+        valid_shares = item["highest_satellite_share"][valid_mask]
+        valid_dominant_ids = item["most_selected_satellite"][valid_mask]
+        if len(valid_shares) == 0:
+            print(f"{label}: no UE satellite selections were recorded")
+            continue
+        dominant_id_counts = np.bincount(valid_dominant_ids)
+        most_frequent_dominant_id = int(np.argmax(dominant_id_counts))
+        dominant_id_frequency = (
+            dominant_id_counts[most_frequent_dominant_id]
+            / len(valid_dominant_ids)
+        )
+        print(
+            f"{label}: "
+            f"average_highest_share={np.mean(valid_shares):.4f}, "
+            f"maximum_highest_share={np.max(valid_shares):.4f}, "
+            f"average_UE_selections_per_RAO="
+            f"{np.mean(item['total_selections']):.2f}, "
+            f"most_frequent_dominant_satellite="
+            f"{most_frequent_dominant_id}, "
+            f"dominant_in_valid_RAOs={dominant_id_frequency:.4f}"
+        )
     raise SystemExit
 
 
