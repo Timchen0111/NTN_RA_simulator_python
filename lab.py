@@ -3,8 +3,8 @@ import numpy as np
 
 import main
 
-EXPERIMENT_CODE = 3
-SIM_SECONDS = 5
+EXPERIMENT_CODE = 7
+SIM_SECONDS = 10
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -208,7 +208,7 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
     SEED = 42
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    RHO = 1.0
+    RHO = 1.5
     # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
         ([6, 1], "Full DCLARA"),
@@ -709,25 +709,29 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
         )
         for item in validation_results
     ])
-    x = np.arange(len(rho_axis))
-    bar_width = 0.8 / max_state_count
+    idle_probability_error = pi_error_matrix[:, 0]
+    non_idle_state_average_error = np.nanmean(pi_error_matrix[:, 1:], axis=1)
 
-    plt.figure(figsize=(11, 6))
-    for state_idx in range(max_state_count):
-        state_label = "Idle" if state_idx == 0 else f"State {state_idx}"
-        offsets = x - 0.4 + bar_width * (state_idx + 0.5)
-        plt.bar(
-            offsets,
-            pi_error_matrix[:, state_idx],
-            width=bar_width,
-            label=state_label,
-        )
+    plt.figure(figsize=(10, 6))
+    plt.plot(
+        rho_axis,
+        idle_probability_error,
+        marker="o",
+        linewidth=1.6,
+        label="Idle probability error",
+    )
+    plt.plot(
+        rho_axis,
+        non_idle_state_average_error,
+        marker="s",
+        linewidth=1.6,
+        label="Average non-idle state error",
+    )
     plt.axhline(y=0.0, color="black", linestyle="--", linewidth=1.0, alpha=0.6)
     plt.title("State Probability Estimation Error under Different Arrival Rates")
     plt.xlabel("Arrival rate (packets/s)")
     plt.ylabel("Mean error (estimated minus true)")
-    plt.xticks(x, [f"{rho:g}" for rho in rho_axis])
-    plt.grid(True, axis="y", alpha=0.3)
+    plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.show()
