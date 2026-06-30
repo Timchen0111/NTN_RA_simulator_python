@@ -3,8 +3,8 @@ import numpy as np
 
 import main
 
-EXPERIMENT_CODE = 12
-SIM_SECONDS = 180
+EXPERIMENT_CODE = 3
+SIM_SECONDS = 5
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -51,12 +51,9 @@ if RUN_ALL:
     RHO_VALUES = SIM_RHO_VALUES
     # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
-        ([6, 1], "Proposed / Proposed"),
-        ([6, 2], "Proposed / DACB"),
-        ([6, 3], "Proposed / SA-ACB"),
-        ([3, 1], "VU / Proposed"),
-        ([4, 1], "HE / Proposed"),
-        ([5, 1], "LLA / Proposed"),
+        ([6, 1], "Full DCLARA"),
+        ([6, 3], "DCLARA-SS with SA-ACB"),
+        ([5, 3], "ALLA with SA-ACB"),
     ]
 
     # Backoff settings 2 and 3 are ACB baselines; all other experiment parameters are
@@ -180,26 +177,11 @@ if RHO_SWEEP_PB:
     masked_heatmap_data = np.ma.masked_invalid(heatmap_data)
     im = plt.imshow(masked_heatmap_data, aspect="auto", cmap="YlGnBu", vmin=0.0, vmax=1.0)
     cbar = plt.colorbar(im)
-    cbar.set_label(r"Avg. $\mathbf{p}_b$")
+    cbar.set_label("Average backoff probability")
 
-    for state_idx in range(heatmap_data.shape[0]):
-        for rho_idx in range(heatmap_data.shape[1]):
-            value = heatmap_data[state_idx, rho_idx]
-            if np.isfinite(value):
-                text_color = "white" if value >= 0.55 else "black"
-                plt.text(
-                    rho_idx,
-                    state_idx,
-                    f"{value:.3f}",
-                    ha="center",
-                    va="center",
-                    color=text_color,
-                    fontsize=9,
-                )
-
-    plt.title(r"Average $\mathbf{p}_b$ vs. $\rho_s$")
-    plt.xlabel(r"$\rho_s$ (packets/s)")
-    plt.ylabel("State")
+    plt.title("Average Backoff Probability under Different Arrival Rates")
+    plt.xlabel("Per-UE arrival rate (packets/s)")
+    plt.ylabel("Remaining delay budget")
     plt.xticks(np.arange(len(rho_axis)), [f"{rho:g}" for rho in rho_axis])
     plt.yticks(np.arange(20), [f"State {idx}" for idx in range(1, 21)])
     plt.tight_layout()
@@ -229,17 +211,36 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
     RHO = 1.0
     # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
-        ([6, 1], "Proposed / Proposed"),
-        ([6, 2], "Proposed / DACB"),
-        ([6, 3], "Proposed / SA-ACB"),
-        ([3, 1], "VU / Proposed"),
-        ([4, 1], "HE / Proposed"),
-        ([5, 1], "LLA / Proposed"),
+        ([6, 1], "Full DCLARA"),
+        ([6, 3], "DCLARA-SS with SA-ACB"),
+        ([5, 3], "ALLA with SA-ACB"),
     ]
-    qos_default = np.zeros(20)
-    qos_default[[4, 9, 14, 19]] = 0.25
+
+    def build_qos_distribution(probability_by_rao_budget):
+        qos_distribution = np.zeros(20)
+        for rao_budget, probability in probability_by_rao_budget.items():
+            qos_distribution[rao_budget - 1] = probability
+        return qos_distribution
+
+    # The QoS figure uses four physically meaningful delay budgets:
+    # 5, 10, 15, and 20 RAOs, corresponding to 0.5, 1.0, 1.5, and 2.0 seconds.
     QOS_DISTRIBUTIONS = [
-        ("Q1\nP(5,10,15,20)=0.25", qos_default),
+        (
+            "Balanced",
+            build_qos_distribution({5: 0.25, 10: 0.25, 15: 0.25, 20: 0.25}),
+        ),
+        (
+            "Non-urgent",
+            build_qos_distribution({20: 1.0}),
+        ),
+        (
+            "Urgent",
+            build_qos_distribution({5: 1.0}),
+        ),
+        (
+            "Bimodal",
+            build_qos_distribution({5: 0.5, 20: 0.5}),
+        ),
     ]
 
     qos_results = {label: [] for _, label in MODES}
@@ -1107,6 +1108,7 @@ if RUN_SATELLITE_SELECTION_CONCENTRATION:
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
     BACKOFF_MODE = 3
+    CONCENTRATION_AVERAGE_WINDOW_RAOS = 100
     EXPERIMENTS = [
         ([6, BACKOFF_MODE], "Proposed"),
         ([3, BACKOFF_MODE], "VU"),
@@ -1158,17 +1160,51 @@ if RUN_SATELLITE_SELECTION_CONCENTRATION:
             ),
         }
 
+    def average_by_rao_window(rao_index, values, window_size):
+        if window_size <= 1:
+            return rao_index, values
+
+        finite_mask = np.isfinite(values)
+        if not np.any(finite_mask):
+            return np.array([], dtype=float), np.array([], dtype=float)
+
+        valid_rao_index = rao_index[finite_mask]
+        valid_values = values[finite_mask]
+        window_ids = valid_rao_index // window_size
+        averaged_rao_index = []
+        averaged_values = []
+
+        for window_id in np.unique(window_ids):
+            in_window = window_ids == window_id
+            averaged_rao_index.append(np.mean(valid_rao_index[in_window]))
+            averaged_values.append(np.mean(valid_values[in_window]))
+
+        return (
+            np.array(averaged_rao_index, dtype=float),
+            np.array(averaged_values, dtype=float),
+        )
+
     plt.figure(figsize=(11, 6), dpi=120)
     for _, label in EXPERIMENTS:
         item = concentration_results[label]
-        plt.plot(
+        averaged_rao_index, averaged_share = average_by_rao_window(
             item["rao_index"],
             item["highest_satellite_share"],
-            linewidth=1.5,
+            CONCENTRATION_AVERAGE_WINDOW_RAOS,
+        )
+        plt.plot(
+            averaged_rao_index,
+            averaged_share,
+            marker="o",
+            markersize=3,
+            linewidth=1.8,
             label=label,
         )
-    plt.title("Maximum Satellite Selection Share over Time")
-    plt.xlabel("RAO index")
+    plt.title(
+        "Maximum Satellite Selection Share over Time "
+        f"({CONCENTRATION_AVERAGE_WINDOW_RAOS}-RAO Average)"
+    )
+    plt.xlabel(f"RAO index ({CONCENTRATION_AVERAGE_WINDOW_RAOS}-RAO average)")
     plt.ylabel("Highest satellite selection share")
     plt.ylim(0.0, 1.02)
     plt.grid(True, alpha=0.3)
