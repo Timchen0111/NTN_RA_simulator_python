@@ -3,8 +3,8 @@ import numpy as np
 
 import main
 
-EXPERIMENT_CODE = 7
-SIM_SECONDS = 10
+EXPERIMENT_CODE = 1
+SIM_SECONDS = 5
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -76,7 +76,10 @@ if RUN_ALL:
                 "rho": rho,
                 "plr": plr,
                 "throughput": avg_throughput,
-                "average_delay_ms": run_history.get("average_delay_ms", np.nan),
+                "average_deadline_budget_utilization": run_history.get(
+                    "average_deadline_budget_utilization",
+                    np.nan,
+                ),
                 "final_n_estimate": final_n_estimate,
             })
 
@@ -109,11 +112,14 @@ if RUN_ALL:
     plt.figure(figsize=(10, 6))
     for _, label in MODES:
         rho_axis = np.array([item["rho"] for item in rho_results[label]])
-        delay_values = np.array([item["average_delay_ms"] for item in rho_results[label]])
-        plt.plot(rho_axis, delay_values, marker="o", linewidth=1.6, label=label)
-    plt.title("Average Delay Comparison under Different Arrival Rates")
+        utilization_values = np.array([
+            item["average_deadline_budget_utilization"] * 100.0
+            for item in rho_results[label]
+        ])
+        plt.plot(rho_axis, utilization_values, marker="o", linewidth=1.6, label=label)
+    plt.title("Deadline Budget Utilization under Different Arrival Rates")
     plt.xlabel("Arrival rate (packets/s)")
-    plt.ylabel("Average Delay (ms)")
+    plt.ylabel("Average deadline budget utilized (%)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -126,7 +132,8 @@ if RUN_ALL:
                 f"{label}, arrival rate={item['rho']:.4f}: "
                 f"PLR={item['plr']:.4f}, "
                 f"throughput={item['throughput']:.2f}, "
-                f"avg_delay_ms={item['average_delay_ms']:.2f}"
+                f"deadline_budget_utilization="
+                f"{item['average_deadline_budget_utilization'] * 100:.2f}%"
                 + (f", final_N={item['final_n_estimate']:.2f}" if np.isfinite(item["final_n_estimate"]) else "")
             )
     raise SystemExit

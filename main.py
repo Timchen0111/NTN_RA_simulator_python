@@ -334,6 +334,7 @@ class UE:
         self.success = 0
         self.current_delay_raos = 0
         self.success_delay_raos = []
+        self.success_deadline_budget_utilizations = []
         self.group = None #這個UE被分配到的衛星群組，初始為None，之後會根據可見衛星列表更新
         self.transmission_success = 0 #實際成功傳輸的次數，減掉self.success後就是碰撞次數
         self.transmission_fail = 0
@@ -544,6 +545,9 @@ class UE:
             self.active = False
             self.success += 1
             self.success_delay_raos.append(self.current_delay_raos)
+            self.success_deadline_budget_utilizations.append(
+                self.current_delay_raos / self.budget
+            )
             self.current_delay_raos = 0
         else:
             # 碰撞失敗，保持 active，下回合 delay 會增加
@@ -1241,7 +1245,17 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         for ue in ue_list
         for delay_raos in ue.success_delay_raos
     ]
+    success_deadline_budget_utilizations = [
+        utilization
+        for ue in ue_list
+        for utilization in ue.success_deadline_budget_utilizations
+    ]
     avg_delay_ms = np.mean(success_delay_raos) * trao if len(success_delay_raos) > 0 else np.nan
+    avg_deadline_budget_utilization = (
+        np.mean(success_deadline_budget_utilizations)
+        if len(success_deadline_budget_utilizations) > 0
+        else np.nan
+    )
     channel_failure_rates = sum(ue.transmission_fail for ue in ue_list) / (sum(ue.transmission_success for ue in ue_list) + sum(ue.transmission_fail for ue in ue_list))
     policy_fallback_count = sum(ue.acb_policy_fallback_count for ue in ue_list)
     acb_selection_count = sum(ue.acb_selection_count for ue in ue_list)
@@ -1261,6 +1275,11 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     print(f"Average Throughput (packets/second): {avg_throughput:.2f}")
     print(f"Packet Loss Rate: {plr:.4f}")
     print(f"AverageDelay (ms): {avg_delay_ms:.2f}" if np.isfinite(avg_delay_ms) else "AverageDelay (ms): N/A")
+    print(
+        f"Deadline Budget Utilization: {avg_deadline_budget_utilization * 100:.2f}%"
+        if np.isfinite(avg_deadline_budget_utilization)
+        else "Deadline Budget Utilization: N/A"
+    )
     print(f"Channel Failure Rate: {channel_failure_rates:.4f}")
     print(f"ACB Policy Fallback Frequency: {policy_fallback_count}/{acb_selection_count} ({policy_fallback_rate:.4f})")
     if np.isfinite(selection_policy_variation_mean):
@@ -1277,6 +1296,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         "AverageDelay": avg_delay_ms,
         "average_delay_ms": avg_delay_ms,
         "average_delay_raos": np.mean(success_delay_raos) if len(success_delay_raos) > 0 else np.nan,
+        "average_deadline_budget_utilization": avg_deadline_budget_utilization,
         "reward": np.mean(ctrl.history_reward),
         "ps_history": ps_history,
         "p_b_history": p_b_history,
