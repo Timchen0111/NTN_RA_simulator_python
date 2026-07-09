@@ -1,10 +1,123 @@
+from collections import Counter
+
 import matplotlib.pyplot as plt
 import numpy as np
 
+import Load_estimator
 import main
 
-EXPERIMENT_CODE = 1
-SIM_SECONDS = 5
+# =============================================================================
+# 第一層實驗模式索引
+# =============================================================================
+# EXPERIMENT_CODE 只負責選擇「要執行哪一組實驗／產生哪一組圖」。
+#
+# 與 chap5.tex 的圖名對照如下。英文圖名、PDF 檔名與 LaTeX label 均依論文：
+#
+# 0  SINGLE_RUN
+#    用途：單次模擬診斷，觀察 throughput、delay、UE 數量估測收斂、
+#          satellite load variance、adaptive epsilon、pi 與 p_s。
+#    論文圖：UE number estimator performance over time
+#            ue_estimate.pdf, \label{fig: n_over_time}
+#    備註：其餘輸出為除錯／診斷圖，未直接對應目前第五章定稿圖。
+#
+# 1  RUN_ALL
+#    用途：完整 DCLARA 與兩個整合式 baseline 的系統效能比較。
+#    論文圖：Packet loss rate comparison of different integrated schemes
+#            all_plr.pdf, \label{fig:allplr}
+#            Delay budget utilization comparison of different schemes
+#            db_consumption.pdf, \label{fig:db_consumption}
+#    備註：程式另畫 throughput，該圖未直接收入目前第五章。
+#
+# 2  RHO_SWEEP_PB
+#    用途：比較不同 traffic load 下，各剩餘 delay state 的平均 backoff
+#          probability，檢查 backoff controller 的輸出行為。
+#    論文圖：Backoff controller performance heatmap
+#            backoff_heatmap.pdf, \label{fig: pb}
+#
+# 3  RUN_QOS_DISTRIBUTION_COMPARISON
+#    用途：比較 Balanced、Non-urgent、Urgent、Bimodal 四種初始
+#          delay-budget distribution 下的 PLR。
+#    論文圖：Packet loss rate comparison over different delay-budget distributions
+#            qos_plr.pdf, \label{fig:qos_plr}
+#
+# 4  RUN_RHO_SWEEP
+#    用途：固定 DCLARA satellite selection，比較 Proposed、DACB、
+#          SA-ACB 三種 backoff control scheme。
+#    論文圖：Packet loss rate comparison of different backoff control schemes
+#            bs_new.pdf, \label{fig:bs}
+#    備註：程式另畫 throughput 與 delay，未直接收入目前第五章。
+#
+# 5  RUN_FIXED_LOAD_IMBALANCE_SWEEP
+#    用途：在不同 traffic load 下，比較 fixed epsilon 與 adaptive epsilon
+#          對 PLR 的影響。
+#    論文圖：Comparison of the proposed adaptive load-imbalance threshold
+#            with fixed $\epsilon$ values
+#            eps_tuning.pdf, \label{fig:fixedplr}
+#
+# 6  RUN_SATELLITE_SELECTION_SWEEP
+#    用途：固定 SA-ACB backoff，比較不同 satellite selection scheme 的 PLR。
+#    論文圖：Packet loss rate comparison of different satellite selection schemes
+#            ssplr.pdf, \label{fig:ssplr}
+#    備註：程式另畫 throughput 與 delay，未直接收入目前第五章。
+#
+# 7  RUN_ESTIMATION_VALIDATION_RHO_SWEEP
+#    用途：在不同 traffic load 下驗證 predicted p_s、steady-state pi，
+#          並附帶檢查最終 UE number estimate。
+#    論文圖：Predicted transmission success probability error over different
+#            load conditions
+#            newpserror.pdf, \label{fig:ps_error}
+#            Steady state probability error over different load
+#            newpierror.pdf, \label{fig: pi_estimate}
+#    備註：最終 UE number relative error 圖為診斷圖；論文中的 UE number
+#          convergence over time 由 mode 0 觀察。
+#
+# 8  RUN_SATELLITE_SELECTION_PERFORMANCE
+#    用途：分析 fixed epsilon 對平均 p_s 的影響，以及 adaptive epsilon
+#          在不同 traffic load 下隨時間的變化。
+#    論文圖：Expected successful preamble transmission probability
+#            $\bar{p}^{\mathrm{s}}$
+#            across different load-imbalance thresholds
+#            fixed_eps.pdf, \label{fig: ps_across_eps}
+#            Adaptive load-imbalance threshold $\epsilon_m$ under different
+#            traffic load conditions over time
+#            rho_s_over_t.pdf, \label{fig: different_load_eps}
+#
+# 9  RUN_GROUP_LEVEL_STATISTICS
+#    用途：檢查每個 RAO 的 group 數量，以及各時間區段 dominant group 的
+#          group weight 分布。
+#    論文圖：Number of existing groups during the simulation period
+#            Group_num.pdf, \label{fig: group_num}
+#            Weight distribution of the dominant groups
+#            Group_heat.pdf, \label{fig:group_heatmap}
+#
+# 10 RUN_ALLA_ETA_SWEEP
+#    用途：在不同 traffic load 下調整 ALLA 的 weighting factor eta。
+#    論文圖：Tuning of the weighting factor $\eta$ for adapted LLA schemes
+#            eta_sweep.pdf, \label{fig: eta_sweep}
+#
+# 11 RUN_OFFERED_LOAD_RHO_SWEEP
+#    用途：將 per-UE arrival rate 對應到 normalized offered load，決定後續
+#          baseline comparison 採用的 traffic-load 範圍。
+#    論文圖：Average normalized offered load among different traffic load conditions
+#            rhos_range.pdf, \label{fig:rhos_range}
+#
+# 12 RUN_SATELLITE_SELECTION_CONCENTRATION
+#    用途：比較各 satellite selection scheme 隨時間的最大單星選擇占比，
+#          用來觀察 UE selection concentration。
+#    論文圖：Maximum satellite selection share comparison of different
+#            satellite selection schemes over time
+#            max_ss.pdf, \label{fig:maxss}
+#
+# 13 RUN_LOAD_ESTIMATOR_PERFORMANCE
+#    用途：比較 MoM load estimator 的 estimated load、true load 與
+#          absolute estimation error。
+#    論文圖：Load estimator performance
+#            load_estimator_performance.pdf,
+#            \label{fig: load_estimator_performance}
+#
+# =============================================================================
+EXPERIMENT_CODE = 9
+SIM_SECONDS = 180
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -12,19 +125,20 @@ OFFERED_LOAD_RHO_VALUES = np.array(
     [0.1,0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0]
 )
 EXPERIMENT_SWITCHES = {
-    0: "SINGLE_RUN",
-    1: "RUN_ALL",
-    2: "RHO_SWEEP_PB",
-    3: "RUN_QOS_DISTRIBUTION_COMPARISON",
-    4: "RUN_RHO_SWEEP",
-    5: "RUN_FIXED_LOAD_IMBALANCE_SWEEP",
-    6: "RUN_SATELLITE_SELECTION_SWEEP",
-    7: "RUN_ESTIMATION_VALIDATION_RHO_SWEEP",
-    8: "RUN_SATELLITE_SELECTION_PERFORMANCE",
-    9: "epsilon_sweep",
-    10: "RUN_ALLA_ETA_SWEEP",
-    11: "RUN_OFFERED_LOAD_RHO_SWEEP",
-    12: "RUN_SATELLITE_SELECTION_CONCENTRATION",
+    0: "Single-run diagnostics",
+    1: "Integrated scheme comparison",
+    2: "Backoff probability heatmap",
+    3: "Delay-budget distribution comparison",
+    4: "Backoff control scheme comparison",
+    5: "Fixed versus adaptive epsilon comparison",
+    6: "Satellite selection scheme comparison",
+    7: "Controller-side estimation validation",
+    8: "Satellite selection component analysis",
+    9: "Group-level statistics validation",
+    10: "ALLA eta tuning",
+    11: "Normalized offered-load range",
+    12: "Satellite selection concentration",
+    13: "Load estimator performance",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -37,10 +151,11 @@ RUN_FIXED_LOAD_IMBALANCE_SWEEP = EXPERIMENT_CODE == 5
 RUN_SATELLITE_SELECTION_SWEEP = EXPERIMENT_CODE == 6
 RUN_ESTIMATION_VALIDATION_RHO_SWEEP = EXPERIMENT_CODE == 7
 RUN_SATELLITE_SELECTION_PERFORMANCE = EXPERIMENT_CODE == 8 #Different epsilon values
-epsilon_sweep = EXPERIMENT_CODE == 9
+RUN_GROUP_LEVEL_STATISTICS = EXPERIMENT_CODE == 9
 RUN_ALLA_ETA_SWEEP = EXPERIMENT_CODE == 10
 RUN_OFFERED_LOAD_RHO_SWEEP = EXPERIMENT_CODE == 11
 RUN_SATELLITE_SELECTION_CONCENTRATION = EXPERIMENT_CODE == 12
+RUN_LOAD_ESTIMATOR_PERFORMANCE = EXPERIMENT_CODE == 13
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -478,31 +593,8 @@ if RUN_SATELLITE_SELECTION_SWEEP:
     USE_REAL_PS = False
     RHO_VALUES = SIM_RHO_VALUES
 
-    def epsilon_plot_label(epsilon):
-        exponent = np.log10(epsilon) if epsilon > 0 else np.nan
-        rounded_exponent = int(np.round(exponent)) if np.isfinite(exponent) else None
-        if rounded_exponent is not None and np.isclose(epsilon, 10.0 ** rounded_exponent):
-            return rf"$\epsilon=10^{{{rounded_exponent}}}$"
-        return rf"$\epsilon={epsilon:g}$"
-
-    def epsilon_text_label(epsilon):
-        exponent = np.log10(epsilon) if epsilon > 0 else np.nan
-        rounded_exponent = int(np.round(exponent)) if np.isfinite(exponent) else None
-        if rounded_exponent is not None and np.isclose(epsilon, 10.0 ** rounded_exponent):
-            return f"ε=10^{rounded_exponent}"
-        return f"ε={epsilon:g}"
-
     EXPERIMENTS = [
-        #([3, 1], "VU", {}),
-        #([4, 1], "HE", {}),
-        ([5, 3], "ALLA", {}),
-        ([6, 3], r"Adaptive $\epsilon^m$", "Adaptive ε^m", 0.1),
-         ([7, 3], r"Adaptive $\epsilon^m$", "Adaptive ε^m", 0.1),
-    ]
-
-    EXPERIMENTS = [
-        #([3, 1], "VU", {}),
-        #([4, 1], "HE", {}),
+        ([3, 3], "VU", {}),
         ([5, 3], "ALLA", {}),
         ([6, 3], "Proposed", {}),
         ([7, 3], "LLA", {}),
@@ -885,85 +977,143 @@ if RUN_SATELLITE_SELECTION_PERFORMANCE:
         )
     raise SystemExit
 
-if epsilon_sweep:
-    # Epsilon sweep for convex group satellite selection.
-    EPSILON_VALUES = [0.0, 1e-4, 1e-3, 1e-2, 1e-1]
-    EPSILON_RHO = 1.0
-    EPSILON_SECONDS = SIM_SECONDS
-    EPSILON_NUM_UE = 10000
-    EPSILON_MODE = [1, 1]
-    EPSILON_SEED = 42
-    epsilon_results = []
+if RUN_GROUP_LEVEL_STATISTICS:
+    GROUP_TABLE_FILENAME = "group_ps_table.npz"
+    ANALYSIS_SECONDS = SIM_SECONDS
+    SEGMENT_SIZE_RAOS = 100
+    SEGMENT_TOP_K = 3
 
-    for eps in EPSILON_VALUES:
-        print(f"\nRunning epsilon sweep: epsilon={eps}")
-        avg_throughput, plr, n_history, actual_pi, observe_pi, load_imbalance_history, run_history = main.main(
-            EPSILON_RHO,
-            EPSILON_SECONDS,
-            EPSILON_NUM_UE,
-            EPSILON_MODE,
-            EPSILON_SEED,
-            IMBALANCE_EPSILON=eps,
+    def format_group_label(group):
+        return str(tuple(int(satellite_id) + 1 for satellite_id in group))
+
+    group_weight_table, group_ps_table, _ = main.load_ps_tables(
+        GROUP_TABLE_FILENAME
+    )
+    with np.load(GROUP_TABLE_FILENAME, allow_pickle=True) as group_table_data:
+        TRAO_MS = (
+            int(group_table_data["trao_ms"])
+            if "trao_ms" in group_table_data.files
+            else 100
         )
-        epsilon_results.append({
-            "epsilon": eps,
-            "plr": plr,
-            "throughput": avg_throughput,
-            "average_delay_ms": run_history.get("average_delay_ms", np.nan),
-            "load_variance": -np.mean(load_imbalance_history) if len(load_imbalance_history) > 0 else np.nan,
-        })
 
-    epsilon_labels = [str(item["epsilon"]) for item in epsilon_results]
-    epsilon_plr = [item["plr"] for item in epsilon_results]
-    epsilon_throughput = [item["throughput"] for item in epsilon_results]
-    epsilon_delay = [item["average_delay_ms"] for item in epsilon_results]
-    epsilon_load_variance = [item["load_variance"] for item in epsilon_results]
+    max_rao_count = ANALYSIS_SECONDS * 1000 // TRAO_MS
+    used_rao_count = min(max_rao_count, len(group_weight_table))
+    if used_rao_count <= 0:
+        raise ValueError("No group-level statistics are available for plotting.")
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(epsilon_labels, epsilon_plr, marker="o", color="#3498db")
-    plt.title("Packet Loss Rate under Imbalance Epsilon")
-    plt.xlabel("Imbalance epsilon")
-    plt.ylabel("PLR")
-    plt.grid(True, linestyle=":", alpha=0.6)
+    group_weight_table = group_weight_table[:used_rao_count]
+    group_ps_table = group_ps_table[:used_rao_count]
+    group_counts = np.array([
+        len(groups)
+        for groups in group_weight_table
+    ])
+
+    first_ps_table = next(
+        (table for table in group_ps_table if len(table) > 0),
+        None,
+    )
+    satellite_count = (
+        len(next(iter(first_ps_table.values())))
+        if first_ps_table is not None
+        else 0
+    )
+
+    print("\n--- Group-Level Statistics Summary ---")
+    print(f"Satellite count: {satellite_count}")
+    print(f"Analysis window: first {ANALYSIS_SECONDS} seconds")
+    print(f"RAO duration: {TRAO_MS} ms")
+    print(f"RAO count: {len(group_counts)}")
+    print(f"Average groups per RAO: {np.mean(group_counts):.4f}")
+    print(f"Median groups per RAO: {np.median(group_counts):.4f}")
+    print(f"Min groups per RAO: {np.min(group_counts)}")
+    print(f"Max groups per RAO: {np.max(group_counts)}")
+
+    plt.figure(figsize=(12, 5))
+    plt.plot(range(len(group_counts)), group_counts, linewidth=1.4)
+    plt.title("Number of Preselection Groups per RAO")
+    plt.xlabel("RAO Index")
+    plt.ylabel("Group Count")
+    plt.grid(True, linestyle="--", alpha=0.4)
     plt.tight_layout()
     plt.show()
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(epsilon_labels, epsilon_throughput, marker="o", color="#27ae60")
-    plt.title("Average Throughput under Imbalance Epsilon")
-    plt.xlabel("Imbalance epsilon")
-    plt.ylabel("Packets / Second")
-    plt.grid(True, linestyle=":", alpha=0.6)
-    plt.tight_layout()
-    plt.show()
+    integrated_group_weights = Counter()
+    for weights in group_weight_table:
+        integrated_group_weights.update(weights)
+    average_group_weights = {
+        group: total_weight / len(group_weight_table)
+        for group, total_weight in integrated_group_weights.items()
+    }
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(epsilon_labels, epsilon_delay, marker="o", color="#8e44ad")
-    plt.title("  under Imbalance Epsilon")
-    plt.xlabel("Imbalance epsilon")
-    plt.ylabel("ms")
-    plt.grid(True, linestyle=":", alpha=0.6)
-    plt.tight_layout()
-    plt.show()
+    segment_records = []
+    segment_top_groups = set()
+    for start in range(0, len(group_weight_table), SEGMENT_SIZE_RAOS):
+        end = min(start + SEGMENT_SIZE_RAOS, len(group_weight_table))
+        segment_weights = Counter()
+        for weights in group_weight_table[start:end]:
+            segment_weights.update(weights)
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(epsilon_labels, epsilon_load_variance, marker="o", color="#f39c12")
-    plt.title("Load Variance Across Satellites under Imbalance Epsilon")
-    plt.xlabel("Imbalance epsilon")
-    plt.ylabel("Load Variance Across Satellites")
-    plt.grid(True, linestyle=":", alpha=0.6)
-    plt.tight_layout()
-    plt.show()
+        segment_length = end - start
+        averaged_weights = {
+            group: total_weight / segment_length
+            for group, total_weight in segment_weights.items()
+        }
+        top_groups = sorted(
+            averaged_weights.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:SEGMENT_TOP_K]
+        segment_records.append((start, end - 1, averaged_weights, top_groups))
+        segment_top_groups.update(group for group, _ in top_groups)
 
-    print("\n--- Epsilon Sweep Complete ---")
-    for item in epsilon_results:
-        print(
-            f"epsilon={item['epsilon']}: "
-            f"PLR={item['plr']:.4f}, "
-            f"throughput={item['throughput']:.2f}, "
-            f"avg_delay_ms={item['average_delay_ms']:.2f}, "
-            f"load_variance_across_satellites={item['load_variance']:.4f}"
+    heatmap_groups = sorted(
+        segment_top_groups,
+        key=lambda group: average_group_weights.get(group, 0.0),
+        reverse=True,
+    )
+    if heatmap_groups:
+        heatmap = np.array([
+            [
+                averaged_weights.get(group, np.nan)
+                if group in {top_group for top_group, _ in top_groups}
+                else np.nan
+                for _, _, averaged_weights, top_groups in segment_records
+            ]
+            for group in heatmap_groups
+        ])
+        x_labels = [
+            f"{start}-{end}"
+            for start, end, _, _ in segment_records
+        ]
+        y_labels = [
+            format_group_label(group)
+            for group in heatmap_groups
+        ]
+
+        fig_width = max(12, len(x_labels) * 0.7)
+        fig_height = max(6, len(y_labels) * 0.35)
+        plt.figure(figsize=(fig_width, fig_height))
+        cmap = plt.cm.viridis.copy()
+        cmap.set_bad(color="white")
+        plt.imshow(
+            np.ma.masked_invalid(heatmap),
+            aspect="auto",
+            cmap=cmap,
         )
+        plt.colorbar(label="Average group weight in each segment")
+        plt.title("Weight distribution of the dominant groups")
+        plt.xlabel("RAO Segment")
+        plt.ylabel("Group")
+        plt.xticks(
+            range(len(x_labels)),
+            x_labels,
+            rotation=45,
+            ha="right",
+        )
+        plt.yticks(range(len(y_labels)), y_labels)
+        plt.tight_layout()
+        plt.show()
+
     raise SystemExit
 
 
@@ -1248,6 +1398,141 @@ if RUN_SATELLITE_SELECTION_CONCENTRATION:
             f"{most_frequent_dominant_id}, "
             f"dominant_in_valid_RAOs={dominant_id_frequency:.4f}"
         )
+    raise SystemExit
+
+
+if RUN_LOAD_ESTIMATOR_PERFORMANCE:
+    PREAMBLE_COUNT = 54
+    NMAX = 1000
+    TRUE_LOAD_VALUES = np.arange(1, 302, 10)
+    NUM_TRIALS = 50
+    SEED = 42
+
+    np.random.seed(SEED)
+    expected_tables = Load_estimator.precompute_expected_tables(
+        PREAMBLE_COUNT,
+        NMAX,
+    )
+
+    ground_truth = []
+    estimations = []
+    for true_load in TRUE_LOAD_VALUES:
+        trial_estimates = []
+        for _ in range(NUM_TRIALS):
+            selections = np.random.randint(
+                0,
+                PREAMBLE_COUNT,
+                size=true_load,
+            )
+            counts = np.bincount(
+                selections,
+                minlength=PREAMBLE_COUNT,
+            )
+            idle_preambles = np.sum(counts == 0)
+            successful_preambles = np.sum(counts == 1)
+            collided_preambles = np.sum(counts > 1)
+            estimated_load = Load_estimator.load_estimator(
+                np.array([idle_preambles]),
+                np.array([successful_preambles]),
+                np.array([collided_preambles]),
+                expected_tables,
+            )
+            trial_estimates.append(estimated_load[0])
+
+        ground_truth.append(true_load)
+        estimations.append(np.mean(trial_estimates))
+
+    ground_truth = np.array(ground_truth)
+    estimations = np.array(estimations)
+    absolute_errors = np.abs(estimations - ground_truth)
+    desired_load_ratios = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+    corresponding_loads = desired_load_ratios * PREAMBLE_COUNT
+
+    fig, (ax_estimate, ax_error) = plt.subplots(
+        2,
+        1,
+        figsize=(11, 10),
+    )
+
+    ax_estimate.plot(
+        ground_truth,
+        ground_truth,
+        "r--",
+        label="Ideal (Ground Truth)",
+    )
+    ax_estimate.scatter(
+        ground_truth,
+        estimations,
+        color="blue",
+        label="MoM Estimation",
+    )
+    ax_estimate.set_ylabel("Estimated Load (Lambda Hat)")
+    ax_estimate.set_title(
+        "MoM Estimator Performance Analysis",
+        fontsize=12,
+    )
+    ax_estimate.legend(loc="upper left")
+    ax_estimate.grid(True, alpha=0.3)
+    ax_estimate.set_xlim(left=-10, right=315)
+
+    estimate_ratio_axis = ax_estimate.twiny()
+    estimate_ratio_axis.set_xlim(ax_estimate.get_xlim())
+    estimate_ratio_axis.set_xticks(corresponding_loads)
+    estimate_ratio_axis.set_xticklabels([
+        f"{ratio:.1f}"
+        for ratio in desired_load_ratios
+    ])
+    estimate_ratio_axis.set_xlabel("Load Ratio (True Lambda / Z)")
+    for load_position in corresponding_loads:
+        ax_estimate.axvline(
+            x=load_position,
+            color="gray",
+            linestyle=":",
+            alpha=0.4,
+        )
+
+    ax_error.plot(
+        ground_truth,
+        absolute_errors,
+        color="purple",
+        marker="o",
+        linewidth=1.5,
+        label="Absolute Error",
+    )
+    ax_error.axhline(
+        y=0,
+        color="black",
+        linestyle="--",
+        alpha=0.6,
+        label="Zero Error",
+    )
+    ax_error.set_xlabel("True Load (Number of UEs)")
+    ax_error.set_ylabel("Absolute Error |Estimated - True|")
+    ax_error.legend(loc="upper left")
+    ax_error.grid(True, alpha=0.3)
+    ax_error.set_xlim(ax_estimate.get_xlim())
+
+    error_ratio_axis = ax_error.twiny()
+    error_ratio_axis.set_xlim(ax_error.get_xlim())
+    error_ratio_axis.set_xticks(corresponding_loads)
+    error_ratio_axis.set_xticklabels([
+        f"{ratio:.1f}"
+        for ratio in desired_load_ratios
+    ])
+    for load_position in corresponding_loads:
+        ax_error.axvline(
+            x=load_position,
+            color="gray",
+            linestyle=":",
+            alpha=0.4,
+        )
+
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- Load Estimator Performance Complete ---")
+    print(f"Seed: {SEED}")
+    print(f"Mean absolute error: {np.mean(absolute_errors):.4f}")
     raise SystemExit
 
 

@@ -164,9 +164,6 @@ class controller:
         })
         self.previous_A_by_group = current_policy
 
-    def set_agent(self):
-        self.last_state = None
-        self.last_action_idx = None
     def add_satellite(self, satellite):
         self.satellites.append(satellite)
         self.sat_num = len(self.satellites) 
@@ -219,10 +216,6 @@ class controller:
     def N_estimation(self, Lambda, denominator):
         current_N = self.rls.update(Lambda, denominator)
         return current_N
-    def reset_agent(self):
-        self.last_state = None
-        self.last_action_idx = None
-
     def update_load_aware_load_indicator(self, load, beta):
         # Mode 5 uses the same EMA idea as the adaptive proposed method, but
         # applies it per satellite so the load penalty does not overreact.
@@ -1003,7 +996,6 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         sat = active_sat_pool[i]
         ctrl.add_satellite(sat) #Controller只加入active_sat_pool裡的衛星
         sat.assign_id(i) #為每個衛星分配新的ID
-    ctrl.set_agent() #在加入衛星後初始化Agent，讓Agent知道目前的衛星列表和數量
     expected_tables = Load_estimator.precompute_expected_tables(Z=sat_list[0].Z, Nmax=1000) #預計算期望值表，傳入Z值和Nmax上限
     n_history = [] # 記錄每個 Slot 的 N_estimate
     ue_list = []
@@ -1026,7 +1018,6 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         ue_list.append(ue)
     ctrl.ue_list = ue_list #將UE列表傳給controller，讓controller可以在需要的時候訪問UE資訊
 
-    ctrl.reset_agent()
     throughput_history = []
     last_real_p_s = None
     ps_history = []
