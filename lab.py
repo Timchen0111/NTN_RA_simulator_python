@@ -116,7 +116,7 @@ import main
 #            \label{fig: load_estimator_performance}
 #
 # =============================================================================
-EXPERIMENT_CODE = 9
+EXPERIMENT_CODE = 2
 SIM_SECONDS = 180
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
@@ -303,9 +303,9 @@ if RHO_SWEEP_PB:
 
     plt.title("Average Backoff Probability under Different Arrival Rates")
     plt.xlabel("Per-UE arrival rate (packets/s)")
-    plt.ylabel("Remaining delay budget")
+    plt.ylabel("Remaining RAO")
     plt.xticks(np.arange(len(rho_axis)), [f"{rho:g}" for rho in rho_axis])
-    plt.yticks(np.arange(20), [f"State {idx}" for idx in range(1, 21)])
+    plt.yticks(np.arange(20), [str(idx) for idx in range(1, 21)])
     plt.tight_layout()
     plt.show()
 
@@ -401,8 +401,8 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
     plt.ylabel("Packet Loss Rate")
     plt.xticks(x, [label for label, _ in QOS_DISTRIBUTIONS])
     plt.grid(True, axis="y", alpha=0.3)
-    plt.legend(loc="lower left", bbox_to_anchor=(1.02, 0.0), borderaxespad=0.0)
-    plt.tight_layout(rect=(0.0, 0.0, 0.8, 1.0))
+    plt.legend(loc="upper left", framealpha=0.9)
+    plt.tight_layout()
     plt.show()
 
     print("\n--- QoS Distribution Comparison Complete ---")
@@ -1151,6 +1151,7 @@ if RUN_ALLA_ETA_SWEEP:
     plt.xlabel(r"ALLA $\eta$")
     plt.ylabel("Packet Loss Rate")
     plt.xscale("log")
+    plt.xticks(ETA_VALUES, [f"{eta:g}" for eta in ETA_VALUES])
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -1453,6 +1454,11 @@ if RUN_LOAD_ESTIMATOR_PERFORMANCE:
         1,
         figsize=(11, 10),
     )
+    fig.suptitle(
+        "MoM Estimator Performance Analysis",
+        fontsize=12,
+        y=0.98,
+    )
 
     ax_estimate.plot(
         ground_truth,
@@ -1466,11 +1472,7 @@ if RUN_LOAD_ESTIMATOR_PERFORMANCE:
         color="blue",
         label="MoM Estimation",
     )
-    ax_estimate.set_ylabel("Estimated Load (Lambda Hat)")
-    ax_estimate.set_title(
-        "MoM Estimator Performance Analysis",
-        fontsize=12,
-    )
+    ax_estimate.set_ylabel("Estimated Load")
     ax_estimate.legend(loc="upper left")
     ax_estimate.grid(True, alpha=0.3)
     ax_estimate.set_xlim(left=-10, right=315)
@@ -1482,7 +1484,7 @@ if RUN_LOAD_ESTIMATOR_PERFORMANCE:
         f"{ratio:.1f}"
         for ratio in desired_load_ratios
     ])
-    estimate_ratio_axis.set_xlabel("Load Ratio (True Lambda / Z)")
+    estimate_ratio_axis.set_xlabel("Load Ratio")
     for load_position in corresponding_loads:
         ax_estimate.axvline(
             x=load_position,
@@ -1506,8 +1508,8 @@ if RUN_LOAD_ESTIMATOR_PERFORMANCE:
         alpha=0.6,
         label="Zero Error",
     )
-    ax_error.set_xlabel("True Load (Number of UEs)")
-    ax_error.set_ylabel("Absolute Error |Estimated - True|")
+    ax_error.set_xlabel("True Load")
+    ax_error.set_ylabel("Absolute Error")
     ax_error.legend(loc="upper left")
     ax_error.grid(True, alpha=0.3)
     ax_error.set_xlim(ax_estimate.get_xlim())
@@ -1527,7 +1529,7 @@ if RUN_LOAD_ESTIMATOR_PERFORMANCE:
             alpha=0.4,
         )
 
-    plt.tight_layout()
+    plt.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
     plt.show()
 
     print("\n--- Load Estimator Performance Complete ---")
