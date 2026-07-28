@@ -115,9 +115,13 @@ import main
 #            load_estimator_performance.pdf,
 #            \label{fig: load_estimator_performance}
 #
+# 14 RUN_COLLISION_RATE_COMPARISON
+#    用途：比較衛星端量測的 real average collision rate 與 DCLARA-SS
+#          根據 predicted effective-load fractions 得到的 collision rate。
+#
 # =============================================================================
-EXPERIMENT_CODE = 2
-SIM_SECONDS = 180
+EXPERIMENT_CODE = 14
+SIM_SECONDS = 10
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -139,6 +143,7 @@ EXPERIMENT_SWITCHES = {
     11: "Normalized offered-load range",
     12: "Satellite selection concentration",
     13: "Load estimator performance",
+    14: "Real and SS-predicted collision rate comparison",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -156,6 +161,7 @@ RUN_ALLA_ETA_SWEEP = EXPERIMENT_CODE == 10
 RUN_OFFERED_LOAD_RHO_SWEEP = EXPERIMENT_CODE == 11
 RUN_SATELLITE_SELECTION_CONCENTRATION = EXPERIMENT_CODE == 12
 RUN_LOAD_ESTIMATOR_PERFORMANCE = EXPERIMENT_CODE == 13
+RUN_COLLISION_RATE_COMPARISON = EXPERIMENT_CODE == 14
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -1535,6 +1541,114 @@ if RUN_LOAD_ESTIMATOR_PERFORMANCE:
     print("\n--- Load Estimator Performance Complete ---")
     print(f"Seed: {SEED}")
     print(f"Mean absolute error: {np.mean(absolute_errors):.4f}")
+    raise SystemExit
+
+
+if RUN_COLLISION_RATE_COMPARISON:
+    NUM_UE = 10000
+    SECONDS = SIM_SECONDS
+    SEED = 42
+    MODE = [6, 1]
+    IMBALANCE_EPSILON = 0.01
+    USE_REAL_PS = False
+    RHO_VALUES = SIM_RHO_VALUES
+
+    collision_results = []
+    for rho in RHO_VALUES:
+        print(
+            f"\nRunning collision-rate comparison: arrival rate={rho:g}"
+        )
+        _, _, _, _, _, _, run_history = main.main(
+            rho,
+            SECONDS,
+            NUM_UE,
+            MODE,
+            SEED,
+            IMBALANCE_EPSILON,
+            USE_REAL_PS=USE_REAL_PS,
+            COLLECT_COLLISION_DIAGNOSTICS=True,
+        )
+        collision_history = run_history["collision_history"]
+        valid_history = [
+            item
+            for item in collision_history
+            if item["total_received_load"] > 0
+            and np.isfinite(item["real_collision_rate"])
+            and np.isfinite(item["ss_predicted_collision_rate"])
+        ]
+        if len(valid_history) == 0:
+            raise ValueError(
+                f"No valid collision samples for arrival rate {rho:g}."
+            )
+
+        total_received_load = float(np.sum([
+            item["total_received_load"] for item in valid_history
+        ]))
+        real_collision_rate = float(np.sum([
+            item["collision_transmissions"] for item in valid_history
+        ]) / total_received_load)
+        ss_predicted_collision_rate = float(np.sum([
+            item["total_received_load"]
+            * item["ss_predicted_collision_rate"]
+            for item in valid_history
+        ]) / total_received_load)
+        total_resources = float(run_history["total_resources_kz"])
+        normalized_effective_load = float(np.mean([
+            item["total_received_load"] / total_resources
+            for item in collision_history
+        ]))
+        collision_results.append({
+            "rho": float(rho),
+            "normalized_effective_load": normalized_effective_load,
+            "real_collision_rate": real_collision_rate,
+            "ss_predicted_collision_rate": ss_predicted_collision_rate,
+            "samples": len(valid_history),
+        })
+
+    load_axis = np.array([
+        item["normalized_effective_load"] for item in collision_results
+    ])
+    real_values = np.array([
+        item["real_collision_rate"] for item in collision_results
+    ])
+    predicted_values = np.array([
+        item["ss_predicted_collision_rate"] for item in collision_results
+    ])
+
+    plt.figure(figsize=(10, 6), dpi=120)
+    plt.plot(
+        load_axis,
+        real_values,
+        marker="o",
+        linewidth=1.8,
+        label="Real average collision rate",
+    )
+    plt.plot(
+        load_axis,
+        predicted_values,
+        marker="s",
+        linewidth=1.8,
+        label="SS module predicted collision rate",
+    )
+    plt.title("Real and SS-Predicted Average Collision Rate")
+    plt.xlabel("Average effective load / total preambles")
+    plt.ylabel("Average collision rate")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    print("\n--- Collision Rate Comparison Complete ---")
+    for item in collision_results:
+        print(
+            f"arrival rate={item['rho']:g}: "
+            f"normalized_effective_load="
+            f"{item['normalized_effective_load']:.6f}, "
+            f"real_collision_rate={item['real_collision_rate']:.6f}, "
+            f"ss_predicted_collision_rate="
+            f"{item['ss_predicted_collision_rate']:.6f}, "
+            f"samples={item['samples']}"
+        )
     raise SystemExit
 
 

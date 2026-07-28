@@ -896,7 +896,7 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
         print(f"VU ps table shape: {mode3_visible_random_ps_table.shape}")
     return group_weight_table, group_ps_table, mode3_visible_random_ps_table
 
-def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=4.0, LOAD_AWARE_LOAD_EMA_BETA=0.2, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=2.0, ADAPTIVE_EPSILON_BETA=0.2, QOS_DISTRIBUTION=None):
+def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=4.0, LOAD_AWARE_LOAD_EMA_BETA=0.2, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=2.0, ADAPTIVE_EPSILON_BETA=0.2, QOS_DISTRIBUTION=None, COLLECT_COLLISION_DIAGNOSTICS=False):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
     if MODE == 0:
@@ -905,6 +905,10 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     else:
         selection_mode = MODE[0]
         backoff_mode = MODE[1]
+    if COLLECT_COLLISION_DIAGNOSTICS and selection_mode not in (1, 6):
+        raise ValueError(
+            "Collision diagnostics require DCLARA-SS selection mode 1 or 6."
+        )
     print(f"--- Simulation Start ---")
     print(f"Mode: {MODE}, Arrival rate lambda: {RHO} packets/s,  Time Slots: {SECONDS}")
     if selection_mode == 0:
@@ -1024,6 +1028,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     p_b_history = []
     offered_arrival_history = []
     ue_satellite_selection_history = []
+    collision_history = [] if COLLECT_COLLISION_DIAGNOSTICS else None
     for ue in ue_list:
         ue.acb_selection_count = 0
         ue.acb_policy_fallback_count = 0
@@ -1103,6 +1108,23 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
             preamble_count=sat_list[0].Z,
         )
         ctrl.record_selection_policy_variation(n, selection_mode)
+        ss_received_load_fractions = None
+        if COLLECT_COLLISION_DIAGNOSTICS:
+            weights = group_weight_table[n]
+            ps_by_group = group_ps_table[n]
+            ss_received_shares = np.zeros(ctrl.sat_num, dtype=float)
+            for group, weight in weights.items():
+                group_key = tuple(group)
+                ss_received_shares += (
+                    float(weight)
+                    * np.asarray(ctrl.A_by_group[group_key], dtype=float)
+                    * np.asarray(ps_by_group[group_key], dtype=float)
+                )
+            total_ss_received_share = float(np.sum(ss_received_shares))
+            if total_ss_received_share > 0:
+                ss_received_load_fractions = (
+                    ss_received_shares / total_ss_received_share
+                )
         # Compute the precomputed p_s from the group selection policy; optionally replace it with lagged real p_s for control.
         if selection_mode == 2:
             precomputed_p_s = 1.0
@@ -1220,6 +1242,60 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
                 total_success_ids_in_this_slot.append(ue_id)
                 success_states_in_this_slot.append(remaining_budget)
 
+        if COLLECT_COLLISION_DIAGNOSTICS:
+            received_load_by_satellite = np.array(
+                [sat.actual_lambda for sat in active_sat_pool],
+                dtype=float,
+            )
+            successful_preambles_by_satellite = np.array(
+                [sat.N_s for sat in active_sat_pool],
+                dtype=float,
+            )
+            total_received_load = float(np.sum(received_load_by_satellite))
+            collision_transmissions = float(np.sum(
+                received_load_by_satellite - successful_preambles_by_satellite
+            ))
+            real_collision_rate = (
+                collision_transmissions / total_received_load
+                if total_received_load > 0
+                else np.nan
+            )
+            if (
+                total_received_load > 0
+                and ss_received_load_fractions is not None
+            ):
+                predicted_load_by_satellite = (
+                    total_received_load * ss_received_load_fractions
+                )
+                predicted_collision_by_satellite = 1.0 - np.exp(
+                    -predicted_load_by_satellite / sat_list[0].Z
+                )
+                ss_predicted_collision_rate = float(np.sum(
+                    ss_received_load_fractions
+                    * predicted_collision_by_satellite
+                ))
+            else:
+                predicted_load_by_satellite = np.full(ctrl.sat_num, np.nan)
+                ss_predicted_collision_rate = np.nan
+            collision_history.append({
+                "time_slot": n,
+                "received_load_by_satellite": received_load_by_satellite,
+                "successful_preambles_by_satellite": successful_preambles_by_satellite,
+                "total_received_load": total_received_load,
+                "collision_transmissions": collision_transmissions,
+                "real_collision_rate": real_collision_rate,
+                "ss_received_load_fractions": (
+                    ss_received_load_fractions.copy()
+                    if ss_received_load_fractions is not None
+                    else np.full(ctrl.sat_num, np.nan)
+                ),
+                "ss_predicted_load_by_satellite": predicted_load_by_satellite,
+                "ss_predicted_collision_rate": ss_predicted_collision_rate,
+                "normalized_effective_load": (
+                    total_received_load / (ctrl.sat_num * sat_list[0].Z)
+                ),
+            })
+
         # 記錄本時間點的總吞吐量
         throughput_history.append(len(total_success_ids_in_this_slot))
 
@@ -1300,6 +1376,8 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         "selection_policy_variation_mean": selection_policy_variation_mean,
         "selection_policy_variation_max": selection_policy_variation_max,
     }
+    if COLLECT_COLLISION_DIAGNOSTICS:
+        run_history["collision_history"] = collision_history
     reported_pi = ctrl.observe_pi if backoff_mode == 1 else np.array([])
     return avg_throughput, plr, n_history, ctrl.actual, reported_pi, ctrl.history_reward, run_history
 
