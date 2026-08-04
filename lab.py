@@ -21,7 +21,7 @@ import main
 #    備註：其餘輸出為除錯／診斷圖，未直接對應目前第五章定稿圖。
 #
 # 1  RUN_ALL
-#    用途：完整 DCLARA 與兩個整合式 baseline 的系統效能比較。
+#    用途：完整 DCLARA 與 ALLA 整合式 baseline 的系統效能比較。
 #    論文圖：Packet loss rate comparison of different integrated schemes
 #            all_plr.pdf, \label{fig:allplr}
 #            Delay budget utilization comparison of different schemes
@@ -120,14 +120,14 @@ import main
 #          根據 predicted effective-load fractions 得到的 collision rate。
 #
 # 15 RUN_SERVICE_RADIUS_COMPARISON
-#    Compare the same three integrated schemes as mode 1 under 100, 200, and
+#    Compare the same two integrated schemes as mode 1 under 100, 200, and
 #    300 km service radii at a fixed arrival rate of 1.5 packets/s.
 #    Each radius uses its matching precomputed group probability table while
 #    keeping the fixed satellite pool, arrival rate, UE count, and seed equal.
 #
 # =============================================================================
-EXPERIMENT_CODE = 15
-SIM_SECONDS = 180
+EXPERIMENT_CODE = 1
+SIM_SECONDS = 10
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -181,7 +181,6 @@ if RUN_ALL:
     # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
         ([6, 1], "Full DCLARA"),
-        ([6, 3], "DCLARA-SS with SA-ACB"),
         ([5, 3], "ALLA with SA-ACB"),
     ]
 
@@ -348,7 +347,6 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
     # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
         ([6, 1], "Full DCLARA"),
-        ([6, 3], "DCLARA-SS with SA-ACB"),
         ([5, 3], "ALLA with SA-ACB"),
     ]
 
@@ -1681,7 +1679,6 @@ if RUN_SERVICE_RADIUS_COMPARISON:
     RHO = 1.5
     MODES = [
         ([6, 1], "Full DCLARA"),
-        ([6, 3], "DCLARA-SS with SA-ACB"),
         ([5, 3], "ALLA with SA-ACB"),
     ]
     RADIUS_SCENARIOS = [
