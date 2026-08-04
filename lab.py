@@ -119,9 +119,15 @@ import main
 #    用途：比較衛星端量測的 real average collision rate 與 DCLARA-SS
 #          根據 predicted effective-load fractions 得到的 collision rate。
 #
+# 15 RUN_SERVICE_RADIUS_COMPARISON
+#    Compare the same three integrated schemes as mode 1 under 100, 200, and
+#    300 km service radii at a fixed arrival rate of 1.5 packets/s.
+#    Each radius uses its matching precomputed group probability table while
+#    keeping the fixed satellite pool, arrival rate, UE count, and seed equal.
+#
 # =============================================================================
-EXPERIMENT_CODE = 14
-SIM_SECONDS = 10
+EXPERIMENT_CODE = 15
+SIM_SECONDS = 180
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -144,6 +150,7 @@ EXPERIMENT_SWITCHES = {
     12: "Satellite selection concentration",
     13: "Load estimator performance",
     14: "Real and SS-predicted collision rate comparison",
+    15: "Service radius comparison",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -162,6 +169,7 @@ RUN_OFFERED_LOAD_RHO_SWEEP = EXPERIMENT_CODE == 11
 RUN_SATELLITE_SELECTION_CONCENTRATION = EXPERIMENT_CODE == 12
 RUN_LOAD_ESTIMATOR_PERFORMANCE = EXPERIMENT_CODE == 13
 RUN_COLLISION_RATE_COMPARISON = EXPERIMENT_CODE == 14
+RUN_SERVICE_RADIUS_COMPARISON = EXPERIMENT_CODE == 15
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -782,6 +790,7 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
             "plr": plr,
             "throughput": avg_throughput,
             "ps_mae": ps_mae,
+            "ps_sample_count": len(ps_history),
             "final_n_estimate": final_n_estimate,
             "n_signed_error": n_signed_error,
             "n_abs_relative_error": n_abs_relative_error,
@@ -855,6 +864,16 @@ if RUN_ESTIMATION_VALIDATION_RHO_SWEEP:
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
+
+    print("\n--- Predicted Transmission Success Probability Error ---")
+    print(f"{'Arrival rate':>12} | {'p_s MAE':>10} | {'RAO samples':>11}")
+    print("-" * 41)
+    for item in validation_results:
+        print(
+            f"{item['rho']:12.4f} | "
+            f"{item['ps_mae']:10.6f} | "
+            f"{item['ps_sample_count']:11d}"
+        )
 
     print("\n--- Estimation Validation Rho Sweep Complete ---")
     for item in validation_results:
@@ -1592,21 +1611,15 @@ if RUN_COLLISION_RATE_COMPARISON:
             * item["ss_predicted_collision_rate"]
             for item in valid_history
         ]) / total_received_load)
-        total_resources = float(run_history["total_resources_kz"])
-        normalized_effective_load = float(np.mean([
-            item["total_received_load"] / total_resources
-            for item in collision_history
-        ]))
         collision_results.append({
             "rho": float(rho),
-            "normalized_effective_load": normalized_effective_load,
             "real_collision_rate": real_collision_rate,
             "ss_predicted_collision_rate": ss_predicted_collision_rate,
             "samples": len(valid_history),
         })
 
-    load_axis = np.array([
-        item["normalized_effective_load"] for item in collision_results
+    rho_axis = np.array([
+        item["rho"] for item in collision_results
     ])
     real_values = np.array([
         item["real_collision_rate"] for item in collision_results
@@ -1614,41 +1627,169 @@ if RUN_COLLISION_RATE_COMPARISON:
     predicted_values = np.array([
         item["ss_predicted_collision_rate"] for item in collision_results
     ])
+    prediction_errors = (predicted_values - real_values) * 100.0
+    mean_absolute_error = float(np.mean(np.abs(prediction_errors)))
 
-    plt.figure(figsize=(10, 6), dpi=120)
-    plt.plot(
-        load_axis,
-        real_values,
-        marker="o",
-        linewidth=1.8,
-        label="Real average collision rate",
+    figure, axis = plt.subplots(figsize=(10, 6), dpi=120)
+    bars = axis.bar(
+        rho_axis,
+        prediction_errors,
+        width=0.3,
+        color="#4C78A8",
     )
-    plt.plot(
-        load_axis,
-        predicted_values,
-        marker="s",
-        linewidth=1.8,
-        label="SS module predicted collision rate",
+    axis.axhline(0.0, color="black", linewidth=1.0)
+    axis.bar_label(bars, fmt="%+.2f", padding=3)
+    axis.set(
+        title="SS Collision Rate Prediction Error",
+        xlabel="Arrival rate (packets/s)",
+        ylabel="Prediction error (percentage points)",
+        xticks=rho_axis,
     )
-    plt.title("Real and SS-Predicted Average Collision Rate")
-    plt.xlabel("Average effective load / total preambles")
-    plt.ylabel("Average collision rate")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
+    axis.text(
+        0.98,
+        0.95,
+        f"MAE = {mean_absolute_error:.2f} percentage points",
+        transform=axis.transAxes,
+        ha="right",
+        va="top",
+    )
+    axis.grid(axis="y", alpha=0.3)
+    axis.set_axisbelow(True)
+    figure.tight_layout()
     plt.show()
 
     print("\n--- Collision Rate Comparison Complete ---")
     for item in collision_results:
         print(
             f"arrival rate={item['rho']:g}: "
-            f"normalized_effective_load="
-            f"{item['normalized_effective_load']:.6f}, "
             f"real_collision_rate={item['real_collision_rate']:.6f}, "
             f"ss_predicted_collision_rate="
             f"{item['ss_predicted_collision_rate']:.6f}, "
+            f"prediction_error="
+            f"{item['ss_predicted_collision_rate'] - item['real_collision_rate']:+.6f}, "
             f"samples={item['samples']}"
         )
+    raise SystemExit
+
+
+if RUN_SERVICE_RADIUS_COMPARISON:
+    NUM_UE = 10000
+    SECONDS = SIM_SECONDS
+    SEED = 42
+    IMBALANCE_EPSILON = 0.001
+    USE_REAL_PS = False
+    RHO = 1.5
+    MODES = [
+        ([6, 1], "Full DCLARA"),
+        ([6, 3], "DCLARA-SS with SA-ACB"),
+        ([5, 3], "ALLA with SA-ACB"),
+    ]
+    RADIUS_SCENARIOS = [
+        (100.0, "group_ps_table_radius_100km.npz"),
+        (200.0, "group_ps_table.npz"),
+        (300.0, "group_ps_table_radius_300km.npz"),
+    ]
+
+    radius_results = {label: [] for _, label in MODES}
+    for mode, label in MODES:
+        for radius_km, group_table_filename in RADIUS_SCENARIOS:
+            print(
+                f"\nRunning service-radius comparison: "
+                f"radius={radius_km:g} km, method={label}, "
+                f"arrival rate={RHO:g}"
+            )
+            (
+                avg_throughput,
+                plr,
+                n_history,
+                _,
+                _,
+                _,
+                run_history,
+            ) = main.main(
+                RHO,
+                SECONDS,
+                NUM_UE,
+                mode,
+                SEED,
+                IMBALANCE_EPSILON,
+                USE_REAL_PS=USE_REAL_PS,
+                SERVICE_RADIUS_KM=radius_km,
+                GROUP_TABLE_FILENAME=group_table_filename,
+            )
+            final_n_estimate = (
+                n_history[-1] if len(n_history) > 0 else np.nan
+            )
+            radius_results[label].append({
+                "radius_km": float(radius_km),
+                "plr": float(plr),
+                "throughput": float(avg_throughput),
+                "average_deadline_budget_utilization": float(
+                    run_history.get(
+                        "average_deadline_budget_utilization",
+                        np.nan,
+                    )
+                ),
+                "final_n_estimate": float(final_n_estimate),
+            })
+
+    def plot_metric(metric, ylabel, title, scale=1.0):
+        figure, axis = plt.subplots(figsize=(10, 6), dpi=120)
+        for _, label in MODES:
+            results = radius_results[label]
+            radius_axis = np.array([item["radius_km"] for item in results])
+            values = np.array([item[metric] for item in results]) * scale
+            axis.plot(
+                radius_axis,
+                values,
+                marker="o",
+                linewidth=1.6,
+                label=label,
+            )
+        axis.set(
+            title=f"{title} (arrival rate = {RHO:g} packets/s)",
+            xlabel="Service radius (km)",
+            ylabel=ylabel,
+            xticks=[radius for radius, _ in RADIUS_SCENARIOS],
+        )
+        axis.grid(True, alpha=0.3)
+        axis.legend()
+        figure.tight_layout()
+        plt.show()
+
+    plot_metric(
+        "plr",
+        "Packet loss rate",
+        "Integrated Scheme PLR under Different Service Radii",
+    )
+    plot_metric(
+        "throughput",
+        "Average throughput (packets/second)",
+        "Integrated Scheme Throughput under Different Service Radii",
+    )
+    plot_metric(
+        "average_deadline_budget_utilization",
+        "Average deadline budget utilized (%)",
+        "Deadline Budget Utilization under Different Service Radii",
+        scale=100.0,
+    )
+
+    print("\n--- Service Radius Comparison Complete ---")
+    for _, label in MODES:
+        for item in radius_results[label]:
+            print(
+                f"radius={item['radius_km']:g} km, {label}, "
+                f"arrival rate={RHO:.4f}: "
+                f"PLR={item['plr']:.4f}, "
+                f"throughput={item['throughput']:.2f}, "
+                f"deadline_budget_utilization="
+                f"{item['average_deadline_budget_utilization'] * 100:.2f}%"
+                + (
+                    f", final_N={item['final_n_estimate']:.2f}"
+                    if np.isfinite(item["final_n_estimate"])
+                    else ""
+                )
+            )
     raise SystemExit
 
 

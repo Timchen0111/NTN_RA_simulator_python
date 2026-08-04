@@ -848,7 +848,12 @@ def _npz_scalar(data, key):
         return value.item()
     return value
 
-def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expected_sat_norad_ids=None):
+def load_ps_tables(
+    filename="group_ps_table.npz",
+    scenario_metadata=None,
+    expected_sat_norad_ids=None,
+    expected_radius_km=None,
+):
     data = np.load(
         filename,
         allow_pickle=True
@@ -889,6 +894,20 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
             raise ValueError(
                 f"{filename} satellite IDs do not match fixed_satellite_pool.json. Regenerate it."
             )
+    if expected_radius_km is not None:
+        expected_radius_km = float(expected_radius_km)
+        if "radius_km" in data.files:
+            table_radius_km = float(_npz_scalar(data, "radius_km"))
+            if not np.isclose(table_radius_km, expected_radius_km):
+                raise ValueError(
+                    f"{filename} radius mismatch. Table={table_radius_km:g} km, "
+                    f"simulation={expected_radius_km:g} km."
+                )
+        elif not np.isclose(expected_radius_km, 200.0):
+            raise ValueError(
+                f"{filename} does not contain radius_km metadata. The legacy table "
+                "can only be used with the default 200 km service radius."
+            )
     print(f"Loaded {len(group_weight_table)} RAOs")
     print(f"Group weight table shape: {group_weight_table.shape}")
     print(f"Group ps table shape: {group_ps_table.shape}")
@@ -896,9 +915,30 @@ def load_ps_tables(filename="group_ps_table.npz", scenario_metadata=None, expect
         print(f"VU ps table shape: {mode3_visible_random_ps_table.shape}")
     return group_weight_table, group_ps_table, mode3_visible_random_ps_table
 
-def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=False, LOAD_AWARE_ETA=4.0, LOAD_AWARE_LOAD_EMA_BETA=0.2, ADAPTIVE_EPSILON_MIN=1e-4, ADAPTIVE_EPSILON_MAX=1e-2, ADAPTIVE_EPSILON_ALPHA=2.0, ADAPTIVE_EPSILON_BETA=0.2, QOS_DISTRIBUTION=None, COLLECT_COLLISION_DIAGNOSTICS=False):
+def main(
+    RHO,
+    SECONDS,
+    NUM_UE,
+    MODE,
+    SEED,
+    IMBALANCE_EPSILON=0.01,
+    USE_REAL_PS=False,
+    LOAD_AWARE_ETA=4.0,
+    LOAD_AWARE_LOAD_EMA_BETA=0.2,
+    ADAPTIVE_EPSILON_MIN=1e-4,
+    ADAPTIVE_EPSILON_MAX=1e-2,
+    ADAPTIVE_EPSILON_ALPHA=2.0,
+    ADAPTIVE_EPSILON_BETA=0.2,
+    QOS_DISTRIBUTION=None,
+    COLLECT_COLLISION_DIAGNOSTICS=False,
+    SERVICE_RADIUS_KM=200.0,
+    GROUP_TABLE_FILENAME="group_ps_table.npz",
+):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
+    SERVICE_RADIUS_KM = float(SERVICE_RADIUS_KM)
+    if not np.isfinite(SERVICE_RADIUS_KM) or SERVICE_RADIUS_KM <= 0:
+        raise ValueError("SERVICE_RADIUS_KM must be a finite positive value.")
     if MODE == 0:
         selection_mode = 0
         backoff_mode = 0
@@ -921,6 +961,8 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
         print(f"Satellite selection imbalance epsilon: {IMBALANCE_EPSILON}")
     print(f"Use lagged real p_s: {USE_REAL_PS}")
     print(f"Load-aware eta: {LOAD_AWARE_ETA}")
+    print(f"Service radius: {SERVICE_RADIUS_KM:g} km")
+    print(f"Group table: {GROUP_TABLE_FILENAME}")
     if selection_mode == 5:
         print(f"Mode 5 load EMA beta: {LOAD_AWARE_LOAD_EMA_BETA}")
     # Optional QoS sweep hook: use the default delay distribution when none is provided.
@@ -957,8 +999,10 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     #載入其他預運算資料
     expected_sat_norad_ids = [int(sat.model.satnum) for sat in real_sats]
     group_weight_table, group_ps_table, mode3_visible_random_ps_table = load_ps_tables(
+        filename=GROUP_TABLE_FILENAME,
         scenario_metadata=scenario_metadata,
         expected_sat_norad_ids=expected_sat_norad_ids,
+        expected_radius_km=SERVICE_RADIUS_KM,
     )
     if selection_mode in (5, 7):
         group_weight_table = None
@@ -1003,7 +1047,7 @@ def main(RHO, SECONDS, NUM_UE, MODE, SEED, IMBALANCE_EPSILON=0.01, USE_REAL_PS=F
     expected_tables = Load_estimator.precompute_expected_tables(Z=sat_list[0].Z, Nmax=1000) #預計算期望值表，傳入Z值和Nmax上限
     n_history = [] # 記錄每個 Slot 的 N_estimate
     ue_list = []
-    R_km = 200.0  # 想要維持強烈幾何落差，建議設 200.0 ~ 300.0 km
+    R_km = SERVICE_RADIUS_KM
     c = [25.03, 121.56] # 台北中心點
 
     # 2. 將公里半徑轉換為經緯度的最大邊界（軸向縮放）

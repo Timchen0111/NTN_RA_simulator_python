@@ -127,7 +127,8 @@ def compute_group_ps_table(
     trao_ms,
     sample_locations,
     filename="group_ps_table.npz",
-    scenario_metadata=None
+    scenario_metadata=None,
+    extra_metadata=None,
 ):
     if scenario_metadata is None:
         scenario_metadata = get_tle_scenario_metadata()
@@ -190,21 +191,35 @@ def compute_group_ps_table(
         if n % 10 == 0:
             print(f"RAO {n}/{num_rao}: groups = {len(weights)}")
 
-    np.savez_compressed(
-        filename,
-        group_weight_table=np.array(group_weight_table, dtype=object),
-        group_ps_table=np.array(group_ps_table, dtype=object),
-        mode3_visible_random_ps_table=np.array(mode3_visible_random_ps_table, dtype=float),
-        sat_norad_ids=np.array([int(sat.model.satnum) for sat in real_sats]),
-        scenario_start_dt_iso=scenario_metadata["start_dt_iso"],
-        tle_epoch_min_iso=scenario_metadata["tle_epoch_min_iso"],
-        tle_epoch_max_iso=scenario_metadata["tle_epoch_max_iso"],
-        tle_epoch_median_iso=scenario_metadata["tle_epoch_median_iso"],
-        tle_file_sha256=scenario_metadata["tle_file_sha256"],
-        seconds=seconds,
-        trao_ms=trao_ms,
-        num_points=num_points
-    )
+    output_data = {
+        "group_weight_table": np.array(group_weight_table, dtype=object),
+        "group_ps_table": np.array(group_ps_table, dtype=object),
+        "mode3_visible_random_ps_table": np.array(
+            mode3_visible_random_ps_table,
+            dtype=float,
+        ),
+        "sat_norad_ids": np.array(
+            [int(sat.model.satnum) for sat in real_sats],
+        ),
+        "scenario_start_dt_iso": scenario_metadata["start_dt_iso"],
+        "tle_epoch_min_iso": scenario_metadata["tle_epoch_min_iso"],
+        "tle_epoch_max_iso": scenario_metadata["tle_epoch_max_iso"],
+        "tle_epoch_median_iso": scenario_metadata["tle_epoch_median_iso"],
+        "tle_file_sha256": scenario_metadata["tle_file_sha256"],
+        "seconds": seconds,
+        "trao_ms": trao_ms,
+        "num_points": num_points,
+    }
+    if extra_metadata is not None:
+        duplicate_keys = set(output_data).intersection(extra_metadata)
+        if duplicate_keys:
+            raise ValueError(
+                "extra_metadata cannot replace standard table fields: "
+                f"{sorted(duplicate_keys)}"
+            )
+        output_data.update(extra_metadata)
+
+    np.savez_compressed(filename, **output_data)
 
     print(f"Saved group p_s table to {filename}")
 
