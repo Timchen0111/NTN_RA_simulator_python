@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import Load_estimator
+import backoff_control
 import main
 
 # =============================================================================
@@ -41,8 +42,8 @@ import main
 #            qos_plr.pdf, \label{fig:qos_plr}
 #
 # 4  RUN_RHO_SWEEP
-#    用途：固定 DCLARA satellite selection，比較 Proposed、DACB、
-#          SA-ACB 三種 backoff control scheme。
+#    用途：固定 DCLARA satellite selection，比較 DCLARA-BC、DACB、
+#          SAACB 三種 backoff control scheme。
 #    論文圖：Packet loss rate comparison of different backoff control schemes
 #            bs_new.pdf, \label{fig:bs}
 #    備註：程式另畫 throughput 與 delay，未直接收入目前第五章。
@@ -55,7 +56,7 @@ import main
 #            eps_tuning.pdf, \label{fig:fixedplr}
 #
 # 6  RUN_SATELLITE_SELECTION_SWEEP
-#    用途：固定 SA-ACB backoff，比較不同 satellite selection scheme 的 PLR。
+#    用途：固定 SAACB backoff，比較不同 satellite selection scheme 的 PLR。
 #    論文圖：Packet loss rate comparison of different satellite selection schemes
 #            ssplr.pdf, \label{fig:ssplr}
 #    備註：程式另畫 throughput 與 delay，未直接收入目前第五章。
@@ -125,9 +126,13 @@ import main
 #    Each radius uses its matching precomputed group probability table while
 #    keeping the fixed satellite pool, arrival rate, UE count, and seed equal.
 #
+# 16 RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY
+#    Keep several sampled RAO states fixed and rerun only the backoff optimizer
+#    from different initial vectors to test initial-guess sensitivity.
+#
 # =============================================================================
-EXPERIMENT_CODE = 1
-SIM_SECONDS = 10
+EXPERIMENT_CODE = 16
+SIM_SECONDS = 5
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -151,6 +156,7 @@ EXPERIMENT_SWITCHES = {
     13: "Load estimator performance",
     14: "Real and SS-predicted collision rate comparison",
     15: "Service radius comparison",
+    16: "Backoff optimizer initial-guess sensitivity",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -170,6 +176,7 @@ RUN_SATELLITE_SELECTION_CONCENTRATION = EXPERIMENT_CODE == 12
 RUN_LOAD_ESTIMATOR_PERFORMANCE = EXPERIMENT_CODE == 13
 RUN_COLLISION_RATE_COMPARISON = EXPERIMENT_CODE == 14
 RUN_SERVICE_RADIUS_COMPARISON = EXPERIMENT_CODE == 15
+RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY = EXPERIMENT_CODE == 16
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -180,8 +187,8 @@ if RUN_ALL:
     RHO_VALUES = SIM_RHO_VALUES
     # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
-        ([6, 1], "Full DCLARA"),
-        ([5, 3], "ALLA with SA-ACB"),
+        ([6, 1], "DCLARA"),
+        ([5, 3], "ALLA with SAACB"),
     ]
 
     # Backoff settings 2 and 3 are ACB baselines; all other experiment parameters are
@@ -346,8 +353,8 @@ if RUN_QOS_DISTRIBUTION_COMPARISON:
     RHO = 1.5
     # Proposed satellite selection uses MODE6 adaptive epsilon in combined comparisons.
     MODES = [
-        ([6, 1], "Full DCLARA"),
-        ([5, 3], "ALLA with SA-ACB"),
+        ([6, 1], "DCLARA"),
+        ([5, 3], "ALLA with SAACB"),
     ]
 
     def build_qos_distribution(probability_by_rao_budget):
@@ -437,9 +444,9 @@ if RUN_RHO_SWEEP:
     USE_REAL_PS = False
     RHO_VALUES = SIM_RHO_VALUES
     MODES = [
-        ([6, 1], "Proposed"),
+        ([6, 1], "DCLARA-BC"),
         ([6, 2], "DACB"),
-        ([6, 3], "SA-ACB"),
+        ([6, 3], "SAACB"),
     ]
 
     # Backoff settings 2 and 3 are ACB baselines; all other experiment parameters are
@@ -543,7 +550,7 @@ if RUN_FIXED_LOAD_IMBALANCE_SWEEP:
         ([1, 1], epsilon_plot_label(1e-3), epsilon_text_label(1e-3), 1e-3),
         ([1, 1], epsilon_plot_label(1e-2), epsilon_text_label(1e-2), 1e-2),
         ([1, 1], epsilon_plot_label(1e-1), epsilon_text_label(1e-1), 1e-1),
-        ([6, 1], r"Adaptive $\epsilon^m$", "Adaptive \u03b5^m", 0.1),
+        ([6, 1], r"Adaptive $\epsilon$", "Adaptive \u03b5", 0.1),
     ]
 
     constraint_results = {plot_label: [] for _, plot_label, _, _ in EXPERIMENTS}
@@ -608,7 +615,7 @@ if RUN_SATELLITE_SELECTION_SWEEP:
     EXPERIMENTS = [
         ([3, 3], "VU", {}),
         ([5, 3], "ALLA", {}),
-        ([6, 3], "Proposed", {}),
+        ([6, 3], "DCLARA-SS", {}),
         ([7, 3], "LLA", {}),
     ]
 
@@ -1295,7 +1302,7 @@ if RUN_SATELLITE_SELECTION_CONCENTRATION:
     BACKOFF_MODE = 3
     CONCENTRATION_AVERAGE_WINDOW_RAOS = 100
     EXPERIMENTS = [
-        ([6, BACKOFF_MODE], "Proposed"),
+        ([6, BACKOFF_MODE], "DCLARA-SS"),
         ([3, BACKOFF_MODE], "VU"),
         #([4, BACKOFF_MODE], "HE"),
         ([5, BACKOFF_MODE], "ALLA"),
@@ -1678,8 +1685,8 @@ if RUN_SERVICE_RADIUS_COMPARISON:
     USE_REAL_PS = False
     RHO = 1.5
     MODES = [
-        ([6, 1], "Full DCLARA"),
-        ([5, 3], "ALLA with SA-ACB"),
+        ([6, 1], "DCLARA"),
+        ([5, 3], "ALLA with SAACB"),
     ]
     RADIUS_SCENARIOS = [
         (100.0, "group_ps_table_radius_100km.npz"),
@@ -1790,6 +1797,156 @@ if RUN_SERVICE_RADIUS_COMPARISON:
     raise SystemExit
 
 
+if RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY:
+    NUM_UE = 10000
+    SECONDS = SIM_SECONDS
+    SEED = 42
+    MODE = [6, 1]
+    RHO = 1.5
+    IMBALANCE_EPSILON = 0.001
+    USE_REAL_PS = False
+    NUM_SAMPLED_RAOS = 3
+
+    print("\nRunning one baseline simulation to collect optimizer inputs.")
+    (
+        _avg_throughput,
+        _plr,
+        n_history,
+        _actual_pi_history,
+        _final_pi,
+        _reward_history,
+        run_history,
+    ) = main.main(
+        RHO,
+        SECONDS,
+        NUM_UE,
+        MODE,
+        SEED,
+        IMBALANCE_EPSILON,
+        USE_REAL_PS=USE_REAL_PS,
+    )
+
+    ps_records = [
+        item for item in run_history["ps_history"]
+        if int(item["time_slot"]) >= 2
+    ]
+    first_eligible_index = int(np.floor(0.2 * len(ps_records)))
+    eligible_records = ps_records[first_eligible_index:]
+    if len(eligible_records) < NUM_SAMPLED_RAOS:
+        raise ValueError(
+            "Not enough RAOs with measured channel attempts for the "
+            "backoff initial-guess sensitivity test."
+        )
+    sample_indices = np.linspace(
+        0,
+        len(eligible_records) - 1,
+        NUM_SAMPLED_RAOS,
+        dtype=int,
+    )
+    sampled_records = [eligible_records[index] for index in sample_indices]
+    sampled_raos = [int(item["time_slot"]) for item in sampled_records]
+
+    random_guess = np.random.default_rng(SEED).uniform(0.0, 1.0, 20)
+    fixed_initial_guesses = [
+        ("All zero", np.zeros(20, dtype=float)),
+        ("All one", np.ones(20, dtype=float)),
+        ("Random", random_guess),
+    ]
+    qos_distribution = np.zeros(20, dtype=float)
+    qos_distribution[[4, 9, 14, 19]] = 0.25
+    rho_rao = 1.0 - np.exp(-RHO * 0.1)
+    p_b_history = run_history["p_b_history"]
+    total_resources = float(run_history["total_resources_kz"])
+    results_by_guess = {
+        "Warm start": [],
+        **{label: [] for label, _ in fixed_initial_guesses},
+    }
+
+    for ps_record in sampled_records:
+        rao = int(ps_record["time_slot"])
+        n_tilde = float(n_history[rao])
+        p_s = float(ps_record["control"])
+        warm_start = np.asarray(p_b_history[rao - 2], dtype=float)
+        initial_guesses = [("Warm start", warm_start), *fixed_initial_guesses]
+
+        rao_results = {}
+        for label, initial_guess in initial_guesses:
+            optimized_pb, _ = backoff_control.proposed_backoff_control(
+                n_tilde,
+                np.asarray(initial_guess, dtype=float),
+                rho_rao,
+                20,
+                qos_distribution,
+                p_s,
+                1,
+                total_resources,
+            )
+            env = backoff_control.SatelliteEnv(n_tilde, rho_rao)
+            p_c, _, _ = env.solve_p_c(
+                optimized_pb,
+                20,
+                qos_distribution,
+                p_s,
+                1,
+                total_resources,
+            )
+            objective = backoff_control.get_loss(
+                optimized_pb,
+                p_c,
+                p_s,
+                qos_distribution,
+                20,
+            )
+            rao_results[label] = {
+                "objective": float(objective),
+                "p_b": np.asarray(optimized_pb, dtype=float),
+            }
+
+        print(f"\nRAO {rao} optimizer results:")
+        for label, result in rao_results.items():
+            p_b_text = ", ".join(
+                f"{value:.6f}" for value in result["p_b"]
+            )
+            print(
+                f"{label:>10}: loss={result['objective']:.10f}, "
+                f"p_b=[{p_b_text}]"
+            )
+
+        reference = rao_results["Warm start"]
+        for label, result in rao_results.items():
+            results_by_guess[label].append({
+                "objective_difference": abs(
+                    result["objective"] - reference["objective"]
+                ),
+                "p_b_difference": float(np.max(np.abs(
+                    result["p_b"] - reference["p_b"]
+                ))),
+            })
+
+    print("\n--- Backoff Initial-Guess Sensitivity Complete ---")
+    print(f"Arrival rate: {RHO:g} packets/s")
+    print(f"Sampled RAOs: {sampled_raos}")
+    print(
+        f"{'Initial guess':>13} | {'Mean |dL|':>11} | "
+        f"{'Max |dL|':>11} | {'Mean Pb diff':>12}"
+    )
+    print("-" * 57)
+    for label, result_list in results_by_guess.items():
+        objective_differences = np.asarray(
+            [item["objective_difference"] for item in result_list], dtype=float
+        )
+        p_b_differences = np.asarray(
+            [item["p_b_difference"] for item in result_list], dtype=float
+        )
+        print(
+            f"{label:>13} | "
+            f"{np.mean(objective_differences):11.3e} | "
+            f"{np.max(objective_differences):11.3e} | "
+            f"{np.mean(p_b_differences):12.6f}"
+        )
+    raise SystemExit
+
+
 # Current single-run experiment.
 num = 10000
 m = [6,1] #Satellite selection mode and backoff control mode. 
@@ -1836,7 +1993,7 @@ if m[1] == 1:
     plt.plot(
         range(len(results[result_key]["N_tilde"])),
         results[result_key]["N_tilde"],
-        label="Proposed",
+        label="Estimated N",
         color="blue",
         linewidth=1.5,
     )

@@ -83,10 +83,10 @@ if RUN_SATELLITE_SELECTION_VALIDATION:
     EXPERIMENTS = [
         #([3, 1], "VU", {}),
         #([4, 1], "HE", {}),
-        ([6, 1], "MODE6", {}),
+        ([6, 1], "DCLARA-SS", {}),
     ]
     EXPERIMENTS.extend(
-        ([5, 1], rf"MODE5, $\eta={eta:g}$", {"LOAD_AWARE_ETA": eta})
+        ([5, 1], rf"ALLA, $\eta={eta:g}$", {"LOAD_AWARE_ETA": eta})
         for eta in MODE5_ETA_VALUES
     )
 
@@ -293,7 +293,7 @@ if RUN_MODE5_ETA_SWEEP:
         for rho in RHO_VALUES:
             eta_item = next(item for item in eta_results[rho] if item["eta"] == eta)
             plr_values.append(eta_item["plr"])
-        plt.plot(RHO_VALUES, np.array(plr_values), marker="o", linewidth=1.6, label=rf"MODE5, $\eta={eta:g}$")
+        plt.plot(RHO_VALUES, np.array(plr_values), marker="o", linewidth=1.6, label=rf"ALLA, $\eta={eta:g}$")
     mode3_plr_values = np.array([mode3_results[rho]["plr"] for rho in RHO_VALUES])
     plt.plot(RHO_VALUES, mode3_plr_values, marker="s", linestyle="--", linewidth=1.8, color="black", label="VU")
     plt.title("MODE5 Eta Sweep with VU Baseline")

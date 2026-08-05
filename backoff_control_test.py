@@ -11,11 +11,8 @@ rho_list = np.array([0.002, 0.005, 0.01, 0.015, 0.02])
 # 格式為: {情境名稱: (Mode, 軌道面或衛星配置參數)}
 scenarios = {
     'Baseline: Non-state dependent Backoff': (3, 3),
-    'Proposed Backoff Control': (4, 3)
+    'DCLARA-BC': (4, 3)
 }
-#'Baseline: Non-state dependent Backoff': 'o', 
- #          'Proposed Backoff Control': 's'}
-
 # 用於儲存最終繪圖數據的結構
 # 結構如: {'Scenario Name': [plr_at_rho1, plr_at_rho2, ...]}
 plr_results = {name: [] for name in scenarios.keys()}
@@ -49,9 +46,9 @@ plt.figure(figsize=(10, 6))
 
 # 為不同情境設定固定顏色與標記，方便辨識
 markers = {'Baseline: Non-state dependent Backoff': 'o', 
-           'Proposed Backoff Control': 's'}
+           'DCLARA-BC': 's'}
 colors = {'Baseline: Non-state dependent Backoff': 'tab:blue', 
-          'Proposed Backoff Control': 'tab:orange'}
+          'DCLARA-BC': 'tab:orange'}
 
 for name in scenarios.keys():
     plt.plot(
@@ -78,9 +75,9 @@ plt.show()
 
 # --- 4. 終端機數據打印對照 ---
 print("\n--- Summary Table (PLR) ---")
-print(f"{'rho':<10}{'Baseline PLR':<20}{'Proposed PLR':<20}")
+print(f"{'rho':<10}{'Baseline PLR':<20}{'DCLARA-BC PLR':<20}")
 print("-" * 50)
 for idx, rho in enumerate(rho_list):
     m3_plr = plr_results['Baseline: Non-state dependent Backoff'][idx]
-    m4_plr = plr_results['Proposed Backoff Control'][idx]
+    m4_plr = plr_results['DCLARA-BC'][idx]
     print(f"{rho:<10.4f}{m3_plr:<20.4f}{m4_plr:<20.4f}")
