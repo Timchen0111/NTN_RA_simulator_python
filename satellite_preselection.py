@@ -2,6 +2,7 @@ import json
 import math
 import numpy as np
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from skyfield.api import load, wgs84
 import orbit
 from main import channel_visibility
@@ -224,6 +225,20 @@ def compute_group_ps_table(
     print(f"Saved group p_s table to {filename}")
 
 def main(NUM_SAT):
+    satellite_pool_filename = f"fixed_satellite_pool_planes_{NUM_SAT}.json"
+    group_table_filename = f"group_ps_table_planes_{NUM_SAT}.npz"
+
+    existing_outputs = [
+        filename
+        for filename in (satellite_pool_filename, group_table_filename)
+        if Path(filename).exists()
+    ]
+    if existing_outputs:
+        raise FileExistsError(
+            "Preselection output already exists; refusing to overwrite: "
+            + ", ".join(existing_outputs)
+        )
+
     np.random.seed(42)
 
     ts = load.timescale()
@@ -251,7 +266,7 @@ def main(NUM_SAT):
         min_elevation=10
     )
 
-    save_satellite_pool(real_sats)
+    save_satellite_pool(real_sats, filename=satellite_pool_filename)
 
     sample_locations = generate_uniform_locations(
         num_points=1000,
@@ -265,7 +280,7 @@ def main(NUM_SAT):
         seconds=200,
         trao_ms=100,
         sample_locations=sample_locations,
-        filename="group_ps_table.npz",
+        filename=group_table_filename,
         scenario_metadata=scenario_metadata
     )
 

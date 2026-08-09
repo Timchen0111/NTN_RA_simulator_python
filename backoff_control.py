@@ -104,8 +104,19 @@ def backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z, backoff_mode, Lam
     raise ValueError(f"Unsupported backoff mode: {backoff_mode}")
 
 
-def proposed_backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z):
+def proposed_backoff_control(
+    N_tilde,
+    last_p_b,
+    rho,
+    D,
+    p_d,
+    p_s,
+    K,
+    Z,
+    return_diagnostics=False,
+):
     env = SatelliteEnv(N_tilde, rho)
+    initial_p_b = np.asarray(last_p_b, dtype=float).copy()
 
     def objective(p_b_vec):
         p_c, _, _ = env.solve_p_c(p_b_vec, D, p_d, p_s, K, Z)
@@ -120,6 +131,20 @@ def proposed_backoff_control(N_tilde, last_p_b, rho, D, p_d, p_s, K, Z):
     )
     opt_p_b = res.x
     _, _, opt_pi = env.solve_p_c(opt_p_b, D, p_d, p_s, K, Z)
+    if return_diagnostics:
+        diagnostics = {
+            "iterations": int(res.nit),
+            "function_evaluations": int(res.nfev),
+            "success": bool(res.success),
+            "status": int(res.status),
+            "message": str(res.message),
+            "initial_loss": float(objective(initial_p_b)),
+            "final_loss": float(res.fun),
+            "max_abs_update": float(np.max(np.abs(opt_p_b - initial_p_b))),
+            "initial_p_b": initial_p_b,
+            "final_p_b": np.asarray(opt_p_b, dtype=float).copy(),
+        }
+        return opt_p_b, opt_pi, diagnostics
     return opt_p_b, opt_pi
 
 

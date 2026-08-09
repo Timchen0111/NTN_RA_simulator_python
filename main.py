@@ -34,6 +34,7 @@ class controller:
         self.adaptive_epsilon_history = []
         self.previous_A_by_group = None
         self.selection_policy_variation_history = []
+        self.backoff_optimizer_history = []
     def set_group_probabilities_for_rao(self, n, selection_mode, use_convex_solver=False, imbalance_epsilon=0.01, preamble_count=None):
         if selection_mode in (5, 7):
             self.A_by_group = {}
@@ -181,7 +182,18 @@ class controller:
         self.actualLambda = sum(actual_lambda)
         #print(f"Total load estimation: Lambda={sum(Lambda)}, Actual Lambda={sum(actual_lambda)}")
         return Lambda
-    def backoff_control(self, total_load, rho, p_d, p_s, K, Z, backoff_mode,n):
+    def backoff_control(
+        self,
+        total_load,
+        rho,
+        p_d,
+        p_s,
+        K,
+        Z,
+        backoff_mode,
+        n,
+        collect_optimizer_diagnostics=False,
+    ):
         #實作backoff control
         if backoff_mode == 1:
             denominator = np.sum(self.observe_pi * (1 - self.p_b)) *p_s
@@ -190,7 +202,36 @@ class controller:
             self.N_estimate = N_tilde
         else:
             N_tilde = self.N_estimate
-        self.p_b, self.observe_pi = backoff_control.backoff_control(N_tilde, self.p_b, rho, self.Dmax, p_d, p_s, K, Z, backoff_mode, total_load, self.success_state_ratio)
+        if backoff_mode == 1 and collect_optimizer_diagnostics:
+            self.p_b, self.observe_pi, diagnostics = (
+                backoff_control.proposed_backoff_control(
+                    N_tilde,
+                    self.p_b,
+                    rho,
+                    self.Dmax,
+                    p_d,
+                    p_s,
+                    K,
+                    Z,
+                    return_diagnostics=True,
+                )
+            )
+            diagnostics["time_slot"] = int(n)
+            self.backoff_optimizer_history.append(diagnostics)
+        else:
+            self.p_b, self.observe_pi = backoff_control.backoff_control(
+                N_tilde,
+                self.p_b,
+                rho,
+                self.Dmax,
+                p_d,
+                p_s,
+                K,
+                Z,
+                backoff_mode,
+                total_load,
+                self.success_state_ratio,
+            )
         if backoff_mode == 1 and n % 10 == 0:
             #print(f"Actual Pi: {self.actualPi}, Observed Pi: {self.observe_pi}")
             self.actual.append(list(self.actualPi))
@@ -933,6 +974,8 @@ def main(
     COLLECT_COLLISION_DIAGNOSTICS=False,
     SERVICE_RADIUS_KM=200.0,
     GROUP_TABLE_FILENAME="group_ps_table.npz",
+    SATELLITE_POOL_FILENAME="fixed_satellite_pool.json",
+    COLLECT_BACKOFF_OPTIMIZER_DIAGNOSTICS=False,
 ):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
@@ -962,6 +1005,7 @@ def main(
     print(f"Use lagged real p_s: {USE_REAL_PS}")
     print(f"Load-aware eta: {LOAD_AWARE_ETA}")
     print(f"Service radius: {SERVICE_RADIUS_KM:g} km")
+    print(f"Satellite pool: {SATELLITE_POOL_FILENAME}")
     print(f"Group table: {GROUP_TABLE_FILENAME}")
     if selection_mode == 5:
         print(f"Mode 5 load EMA beta: {LOAD_AWARE_LOAD_EMA_BETA}")
@@ -994,7 +1038,7 @@ def main(
     start_dt = scenario_metadata["start_dt"]
     print(f"Scenario start time from TLE median epoch: {scenario_metadata['start_dt_iso']}")
     #t_start = ts.from_datetime(start_dt)
-    real_sats = load_fixed_satellites()
+    real_sats = load_fixed_satellites(SATELLITE_POOL_FILENAME)
     #設定controller
     #載入其他預運算資料
     expected_sat_norad_ids = [int(sat.model.satnum) for sat in real_sats]
@@ -1187,7 +1231,19 @@ def main(
         #print(f"Precomputed p_s for RAO {n}: {p_s:.4f}")
         if n > 0:
             ctrl.satellite_selection(Lambda=Lambda,MODE=selection_mode, n=n, target_location=geo, t=current_t)
-            ctrl.backoff_control(total_load=sum(Lambda), rho=rho_rao, p_d = ue_list[0].QoS_requirement, p_s=p_s, K=ctrl.sat_num, Z=sat_list[0].Z,backoff_mode=backoff_mode,n=n)
+            ctrl.backoff_control(
+                total_load=sum(Lambda),
+                rho=rho_rao,
+                p_d=ue_list[0].QoS_requirement,
+                p_s=p_s,
+                K=ctrl.sat_num,
+                Z=sat_list[0].Z,
+                backoff_mode=backoff_mode,
+                n=n,
+                collect_optimizer_diagnostics=(
+                    COLLECT_BACKOFF_OPTIMIZER_DIAGNOSTICS
+                ),
+            )
             p_b_history.append(ctrl.p_b.copy())
             current_n_hat = ctrl.N_estimate
         if backoff_mode == 1:
@@ -1419,6 +1475,7 @@ def main(
         "selection_policy_variation_history": ctrl.selection_policy_variation_history,
         "selection_policy_variation_mean": selection_policy_variation_mean,
         "selection_policy_variation_max": selection_policy_variation_max,
+        "backoff_optimizer_history": ctrl.backoff_optimizer_history,
     }
     if COLLECT_COLLISION_DIAGNOSTICS:
         run_history["collision_history"] = collision_history

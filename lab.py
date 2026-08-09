@@ -2,6 +2,7 @@ from collections import Counter
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import MaxNLocator
 
 import Load_estimator
 import backoff_control
@@ -130,9 +131,14 @@ import main
 #    Keep several sampled RAO states fixed and rerun only the backoff optimizer
 #    from different initial vectors to test initial-guess sensitivity.
 #
+# 17 RUN_ORBIT_PLANE_COMPARISON
+#    Compare the same two integrated schemes under independently generated
+#    1-, 2-, 3-, and 4-orbit-plane scenarios at 200 km and 1.5 packets/s.
+#    The 3-plane scenario reuses the original satellite pool and group table.
+#
 # =============================================================================
 EXPERIMENT_CODE = 16
-SIM_SECONDS = 5
+SIM_SECONDS = 180
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -157,6 +163,7 @@ EXPERIMENT_SWITCHES = {
     14: "Real and SS-predicted collision rate comparison",
     15: "Service radius comparison",
     16: "Backoff optimizer initial-guess sensitivity",
+    17: "Orbit plane count comparison",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -177,6 +184,7 @@ RUN_LOAD_ESTIMATOR_PERFORMANCE = EXPERIMENT_CODE == 13
 RUN_COLLISION_RATE_COMPARISON = EXPERIMENT_CODE == 14
 RUN_SERVICE_RADIUS_COMPARISON = EXPERIMENT_CODE == 15
 RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY = EXPERIMENT_CODE == 16
+RUN_ORBIT_PLANE_COMPARISON = EXPERIMENT_CODE == 17
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -1751,7 +1759,7 @@ if RUN_SERVICE_RADIUS_COMPARISON:
                 label=label,
             )
         axis.set(
-            title=f"{title} (arrival rate = {RHO:g} packets/s)",
+            title=title,
             xlabel="Service radius (km)",
             ylabel=ylabel,
             xticks=[radius for radius, _ in RADIUS_SCENARIOS],
@@ -1764,12 +1772,12 @@ if RUN_SERVICE_RADIUS_COMPARISON:
     plot_metric(
         "plr",
         "Packet loss rate",
-        "Integrated Scheme PLR under Different Service Radii",
+        "PLR Comparison under Different Service Radii",
     )
     plot_metric(
         "throughput",
         "Average throughput (packets/second)",
-        "Integrated Scheme Throughput under Different Service Radii",
+        "Throughput Comparison under Different Service Radii",
     )
     plot_metric(
         "average_deadline_budget_utilization",
@@ -1805,7 +1813,13 @@ if RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY:
     RHO = 1.5
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    NUM_SAMPLED_RAOS = 3
+    NUM_SAMPLED_RAOS = 10
+    NUM_RANDOM_INITIAL_GUESSES = 100
+
+    if NUM_RANDOM_INITIAL_GUESSES < 2:
+        raise ValueError(
+            "NUM_RANDOM_INITIAL_GUESSES must be at least 2."
+        )
 
     print("\nRunning one baseline simulation to collect optimizer inputs.")
     (
@@ -1846,28 +1860,31 @@ if RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY:
     sampled_records = [eligible_records[index] for index in sample_indices]
     sampled_raos = [int(item["time_slot"]) for item in sampled_records]
 
-    random_guess = np.random.default_rng(SEED).uniform(0.0, 1.0, 20)
-    fixed_initial_guesses = [
-        ("All zero", np.zeros(20, dtype=float)),
-        ("All one", np.ones(20, dtype=float)),
-        ("Random", random_guess),
+    random_generator = np.random.default_rng(SEED)
+    initial_guesses = [
+        (
+            f"Random {guess_index + 1}",
+            random_generator.uniform(0.0, 1.0, 20),
+        )
+        for guess_index in range(NUM_RANDOM_INITIAL_GUESSES)
     ]
+    print("\nRandom backoff-vector initial guesses:")
+    for label, initial_guess in initial_guesses:
+        initial_guess_text = ", ".join(
+            f"{value:.6f}" for value in initial_guess
+        )
+        print(f"{label:>10}: [{initial_guess_text}]")
+
     qos_distribution = np.zeros(20, dtype=float)
     qos_distribution[[4, 9, 14, 19]] = 0.25
     rho_rao = 1.0 - np.exp(-RHO * 0.1)
-    p_b_history = run_history["p_b_history"]
     total_resources = float(run_history["total_resources_kz"])
-    results_by_guess = {
-        "Warm start": [],
-        **{label: [] for label, _ in fixed_initial_guesses},
-    }
+    sensitivity_by_rao = []
 
     for ps_record in sampled_records:
         rao = int(ps_record["time_slot"])
         n_tilde = float(n_history[rao])
         p_s = float(ps_record["control"])
-        warm_start = np.asarray(p_b_history[rao - 2], dtype=float)
-        initial_guesses = [("Warm start", warm_start), *fixed_initial_guesses]
 
         rao_results = {}
         for label, initial_guess in initial_guesses:
@@ -1912,242 +1929,371 @@ if RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY:
                 f"p_b=[{p_b_text}]"
             )
 
-        reference = rao_results["Warm start"]
-        for label, result in rao_results.items():
-            results_by_guess[label].append({
-                "objective_difference": abs(
-                    result["objective"] - reference["objective"]
-                ),
-                "p_b_difference": float(np.max(np.abs(
-                    result["p_b"] - reference["p_b"]
-                ))),
-            })
+        objective_values = np.asarray(
+            [result["objective"] for result in rao_results.values()],
+            dtype=float,
+        )
+        optimized_vectors = [
+            result["p_b"] for result in rao_results.values()
+        ]
+        max_pairwise_p_b_difference = 0.0
+        for first_index in range(len(optimized_vectors)):
+            for second_index in range(
+                first_index + 1,
+                len(optimized_vectors),
+            ):
+                pairwise_difference = float(np.max(np.abs(
+                    optimized_vectors[first_index]
+                    - optimized_vectors[second_index]
+                )))
+                max_pairwise_p_b_difference = max(
+                    max_pairwise_p_b_difference,
+                    pairwise_difference,
+                )
+
+        rao_sensitivity = {
+            "rao": rao,
+            "minimum_objective": float(np.min(objective_values)),
+            "maximum_objective": float(np.max(objective_values)),
+            "objective_range": float(np.ptp(objective_values)),
+            "max_pairwise_p_b_difference": max_pairwise_p_b_difference,
+        }
+        sensitivity_by_rao.append(rao_sensitivity)
+        print(
+            f"RAO {rao} sensitivity: "
+            f"loss range={rao_sensitivity['objective_range']:.3e}, "
+            f"max pairwise p_b difference="
+            f"{max_pairwise_p_b_difference:.6f}"
+        )
 
     print("\n--- Backoff Initial-Guess Sensitivity Complete ---")
     print(f"Arrival rate: {RHO:g} packets/s")
     print(f"Sampled RAOs: {sampled_raos}")
+    print(f"Random initial guesses: {NUM_RANDOM_INITIAL_GUESSES}")
     print(
-        f"{'Initial guess':>13} | {'Mean |dL|':>11} | "
-        f"{'Max |dL|':>11} | {'Mean Pb diff':>12}"
+        f"{'RAO':>6} | {'Min loss':>12} | {'Max loss':>12} | "
+        f"{'Loss range':>11} | {'Max Pb diff':>11}"
     )
-    print("-" * 57)
-    for label, result_list in results_by_guess.items():
-        objective_differences = np.asarray(
-            [item["objective_difference"] for item in result_list], dtype=float
-        )
-        p_b_differences = np.asarray(
-            [item["p_b_difference"] for item in result_list], dtype=float
-        )
+    print("-" * 73)
+    for item in sensitivity_by_rao:
         print(
-            f"{label:>13} | "
-            f"{np.mean(objective_differences):11.3e} | "
-            f"{np.max(objective_differences):11.3e} | "
-            f"{np.mean(p_b_differences):12.6f}"
+            f"{item['rao']:6d} | "
+            f"{item['minimum_objective']:12.10f} | "
+            f"{item['maximum_objective']:12.10f} | "
+            f"{item['objective_range']:11.3e} | "
+            f"{item['max_pairwise_p_b_difference']:11.6f}"
         )
+    objective_ranges = np.asarray(
+        [item["objective_range"] for item in sensitivity_by_rao],
+        dtype=float,
+    )
+    p_b_differences = np.asarray(
+        [
+            item["max_pairwise_p_b_difference"]
+            for item in sensitivity_by_rao
+        ],
+        dtype=float,
+    )
+    print(
+        f"Overall loss range: mean={np.mean(objective_ranges):.3e}, "
+        f"max={np.max(objective_ranges):.3e}"
+    )
+    print(
+        f"Overall max pairwise p_b difference: "
+        f"mean={np.mean(p_b_differences):.6f}, "
+        f"max={np.max(p_b_differences):.6f}"
+    )
+    raise SystemExit
+
+
+if RUN_ORBIT_PLANE_COMPARISON:
+    NUM_UE = 10000
+    SECONDS = SIM_SECONDS
+    SEED = 42
+    IMBALANCE_EPSILON = 0.001
+    USE_REAL_PS = False
+    RHO = 1.5
+    SERVICE_RADIUS_KM = 200.0
+    MODES = [
+        ([6, 1], "DCLARA"),
+        ([5, 3], "ALLA with SAACB"),
+    ]
+    ORBIT_PLANE_SCENARIOS = [
+        (
+            1,
+            "fixed_satellite_pool_planes_1.json",
+            "group_ps_table_planes_1.npz",
+        ),
+        (
+            2,
+            "fixed_satellite_pool_planes_2.json",
+            "group_ps_table_planes_2.npz",
+        ),
+        (3, "fixed_satellite_pool.json", "group_ps_table.npz"),
+        (
+            4,
+            "fixed_satellite_pool_planes_4.json",
+            "group_ps_table_planes_4.npz",
+        ),
+    ]
+
+    orbit_plane_results = {label: [] for _, label in MODES}
+    for mode, label in MODES:
+        for (
+            orbit_plane_count,
+            satellite_pool_filename,
+            group_table_filename,
+        ) in ORBIT_PLANE_SCENARIOS:
+            print(
+                f"\nRunning orbit-plane comparison: "
+                f"planes={orbit_plane_count}, method={label}, "
+                f"arrival rate={RHO:g}"
+            )
+            (
+                avg_throughput,
+                plr,
+                n_history,
+                _,
+                _,
+                _,
+                run_history,
+            ) = main.main(
+                RHO,
+                SECONDS,
+                NUM_UE,
+                mode,
+                SEED,
+                IMBALANCE_EPSILON,
+                USE_REAL_PS=USE_REAL_PS,
+                SERVICE_RADIUS_KM=SERVICE_RADIUS_KM,
+                GROUP_TABLE_FILENAME=group_table_filename,
+                SATELLITE_POOL_FILENAME=satellite_pool_filename,
+            )
+            final_n_estimate = (
+                n_history[-1] if len(n_history) > 0 else np.nan
+            )
+            orbit_plane_results[label].append({
+                "orbit_plane_count": int(orbit_plane_count),
+                "plr": float(plr),
+                "throughput": float(avg_throughput),
+                "average_deadline_budget_utilization": float(
+                    run_history.get(
+                        "average_deadline_budget_utilization",
+                        np.nan,
+                    )
+                ),
+                "final_n_estimate": float(final_n_estimate),
+            })
+
+    def plot_orbit_plane_metric(metric, ylabel, title, scale=1.0):
+        figure, axis = plt.subplots(figsize=(10, 6), dpi=120)
+        for _, label in MODES:
+            results = orbit_plane_results[label]
+            plane_axis = np.array([
+                item["orbit_plane_count"] for item in results
+            ])
+            values = np.array([item[metric] for item in results]) * scale
+            axis.plot(
+                plane_axis,
+                values,
+                marker="o",
+                linewidth=1.6,
+                label=label,
+            )
+        axis.set(
+            title=title,
+            xlabel="Number of orbital planes",
+            ylabel=ylabel,
+            xticks=[
+                plane_count
+                for plane_count, _, _ in ORBIT_PLANE_SCENARIOS
+            ],
+        )
+        axis.grid(True, alpha=0.3)
+        axis.legend()
+        figure.tight_layout()
+        plt.show()
+
+    plot_orbit_plane_metric(
+        "plr",
+        "Packet loss rate",
+        "PLR Comparison under Different Numbers of Orbital Planes",
+    )
+    plot_orbit_plane_metric(
+        "throughput",
+        "Average throughput (packets/second)",
+        "Throughput Comparison under Different Numbers of Orbital Planes",
+    )
+    plot_orbit_plane_metric(
+        "average_deadline_budget_utilization",
+        "Average deadline budget utilized (%)",
+        "Deadline Budget Utilization under Different Numbers of Orbital Planes",
+        scale=100.0,
+    )
+
+    print("\n--- Orbit Plane Count Comparison Complete ---")
+    for _, label in MODES:
+        for item in orbit_plane_results[label]:
+            print(
+                f"planes={item['orbit_plane_count']}, {label}, "
+                f"arrival rate={RHO:.4f}: "
+                f"PLR={item['plr']:.4f}, "
+                f"throughput={item['throughput']:.2f}, "
+                f"deadline_budget_utilization="
+                f"{item['average_deadline_budget_utilization'] * 100:.2f}%"
+                + (
+                    f", final_N={item['final_n_estimate']:.2f}"
+                    if np.isfinite(item["final_n_estimate"])
+                    else ""
+                )
+            )
     raise SystemExit
 
 
 # Current single-run experiment.
 num = 10000
-m = [6,1] #Satellite selection mode and backoff control mode. 
+m = [6,1] #Satellite selection mode and backoff control mode.
 USE_REAL_PS = False
-result_key = "Proposed"
-results = {}
 # Proposed satellite selection and backoff control.
-a, b, c, d, e, f, g = main.main(1.2, SIM_SECONDS, num, m, 42, 0.01, USE_REAL_PS=USE_REAL_PS)
-load_variance_history = -np.asarray(f, dtype=float)
-
-results[result_key] = {
-    "N_tilde": c,
-    "Pi": d,
-    "Loads": a,
-    "SuccessRate": b,
-    "LoadVarianceHistory": load_variance_history,
-    "TruePi": e,
-    "RunHistory": g,
-}
-
-single_throughput = results[result_key]["Loads"]
-single_delay_ms = results[result_key]["RunHistory"].get("average_delay_ms", np.nan)
-
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-fig.suptitle(f"Throughput and Average Delay - {result_key}", fontsize=14)
-
-axes[0].bar([result_key], [single_throughput], color="#27ae60")
-axes[0].set_title("Average Throughput")
-axes[0].set_ylabel("Packets / Second")
-axes[0].grid(True, axis="y", alpha=0.3)
-
-axes[1].bar([result_key], [single_delay_ms], color="#8e44ad")
-axes[1].set_title("Average Delay")
-axes[1].set_ylabel("ms")
-axes[1].grid(True, axis="y", alpha=0.3)
-
-plt.tight_layout(rect=[0, 0.03, 1, 0.92])
-plt.show()
-
-
-if m[1] == 1:
-    plt.figure(figsize=(10, 6))
-    plt.axhline(y=num, color="black", linestyle="--", label=f"True N ({num})", alpha=0.6)
-    plt.plot(
-        range(len(results[result_key]["N_tilde"])),
-        results[result_key]["N_tilde"],
-        label="Estimated N",
-        color="blue",
-        linewidth=1.5,
-    )
-
-    plt.title("Population Estimation Convergence")
-    plt.xlabel("Time Slot (n)")
-    plt.ylabel("Estimated Population")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.show()
-
-
-plt.figure(figsize=(10, 6))
-plt.plot(
-    range(len(results[result_key]["LoadVarianceHistory"])),
-    results[result_key]["LoadVarianceHistory"],
-    label="Load Variance Across Satellites",
-    color="blue",
-    linewidth=1.2,
+a, b, c, d, e, f, g = main.main(
+    1.2,
+    SIM_SECONDS,
+    num,
+    m,
+    42,
+    0.01,
+    USE_REAL_PS=USE_REAL_PS,
+    COLLECT_BACKOFF_OPTIMIZER_DIAGNOSTICS=(EXPERIMENT_CODE == 0),
 )
 
-plt.title("Load Variance Across Satellites over Time Slots")
-plt.xlabel("Time Slot (n)")
-plt.ylabel("Load Variance Across Satellites")
-plt.grid(True, alpha=0.3)
-plt.legend()
-plt.show()
-
-
-# Adaptive epsilon over time; only meaningful for satellite selection MODE 6.
-if m[0] == 6:
-    adaptive_epsilon_history = results[result_key]["RunHistory"].get("adaptive_epsilon_history", [])
-    if len(adaptive_epsilon_history) > 0:
-        epsilon_time = np.arange(len(adaptive_epsilon_history))
-        epsilon_values = np.array([item["epsilon"] for item in adaptive_epsilon_history], dtype=float)
-
-        plt.figure(figsize=(10, 6))
-        plt.plot(epsilon_time, epsilon_values, label="Adaptive epsilon", color="#d35400", linewidth=1.3)
-        plt.title("Adaptive Imbalance Epsilon over Time")
-        plt.xlabel("Time Slot (n)")
-        plt.ylabel("Imbalance epsilon")
-        plt.grid(True, alpha=0.3)
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
-    else:
-        print("No adaptive epsilon history was recorded; skip epsilon plot.")
-
-
-# State distribution over time for all pi_n states.
-pi_history = np.asarray(results[result_key]["Pi"], dtype=float)
-estimated_active_pi = np.asarray(results[result_key]["TruePi"], dtype=float)
-estimated_pi = np.concatenate(([max(0.0, 1.0 - np.sum(estimated_active_pi))], estimated_active_pi))
-
-
-if pi_history.size > 0:
-    if pi_history.ndim == 1:
-        pi_history = pi_history.reshape(1, -1)
-
-    record_interval = 10
-    time_slots = np.arange(pi_history.shape[0]) * record_interval
-    state_count = pi_history.shape[1]
-
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-    fig.suptitle(r"Convergence of State Distributions ($\pi_n$)", fontsize=14)
-
-    # Draw idle probability separately so its larger scale does not flatten the active states.
-    idle_line = axes[0].plot(
-        time_slots,
-        pi_history[:, 0],
-        label="Idle",
-        linewidth=1.5,
-    )[0]
-    if estimated_pi.size > 0:
-        axes[0].axhline(
-            y=estimated_pi[0],
-            color=idle_line.get_color(),
-            linestyle="--",
-            linewidth=1.0,
-            alpha=0.65,
-            label="Estimated Idle",
+backoff_optimizer_history = g.get("backoff_optimizer_history", [])
+if len(backoff_optimizer_history) > 0:
+    print("\n--- Backoff Optimizer Update History ---")
+    for item in backoff_optimizer_history:
+        initial_p_b_text = ", ".join(
+            f"{value:.6f}" for value in item["initial_p_b"]
         )
-    axes[0].set_title("Idle State")
-    axes[0].set_ylabel("Probability")
-    axes[0].grid(True, alpha=0.3)
-    axes[0].legend()
-
-    for state_idx in range(1, state_count):
-        state_label = f"State {state_idx}"
-        line = axes[1].plot(
-            time_slots,
-            pi_history[:, state_idx],
-            label=state_label,
-            linewidth=1.5,
-        )[0]
-
-        if state_idx < estimated_pi.size:
-            axes[1].axhline(
-                y=estimated_pi[state_idx],
-                color=line.get_color(),
-                linestyle="--",
-                linewidth=1.0,
-                alpha=0.65,
-                label=f"Estimated {state_label}",
+        final_p_b_text = ", ".join(
+            f"{value:.6f}" for value in item["final_p_b"]
+        )
+        print(
+            f"RAO {item['time_slot']}: "
+            f"iterations={item['iterations']}, "
+            f"function_evaluations={item['function_evaluations']}, "
+            f"success={item['success']}, "
+            f"max_update={item['max_abs_update']:.3e}, "
+            f"loss={item['initial_loss']:.10f} -> "
+            f"{item['final_loss']:.10f}"
+        )
+        print(f"  Initial p_b: [{initial_p_b_text}]")
+        print(f"  Updated p_b: [{final_p_b_text}]")
+        if not item["success"]:
+            print(
+                f"  Optimizer status {item['status']}: "
+                f"{item['message']}"
             )
 
-    axes[1].set_title("Active States")
-    axes[1].set_xlabel("Time Slot (n)")
-    axes[1].set_ylabel("Probability")
-    axes[1].grid(True, alpha=0.3)
-    axes[1].legend()
-    plt.tight_layout()
+    iteration_counts = np.asarray(
+        [item["iterations"] for item in backoff_optimizer_history],
+        dtype=int,
+    )
+    update_sizes = np.asarray(
+        [item["max_abs_update"] for item in backoff_optimizer_history],
+        dtype=float,
+    )
+    success_count = sum(
+        bool(item["success"]) for item in backoff_optimizer_history
+    )
+    print("\n--- Backoff Optimizer Iteration Summary ---")
+    print(f"Recorded RAOs: {len(backoff_optimizer_history)}")
+    print(
+        f"Iterations: mean={np.mean(iteration_counts):.3f}, "
+        f"median={np.median(iteration_counts):.3f}, "
+        f"max={np.max(iteration_counts)}"
+    )
+    print(
+        f"Zero-iteration RAOs: {np.sum(iteration_counts == 0)}/"
+        f"{len(iteration_counts)} "
+        f"({np.mean(iteration_counts == 0) * 100:.2f}%)"
+    )
+    for iteration_value in (1, 2):
+        matching_count = int(np.sum(iteration_counts == iteration_value))
+        print(
+            f"{iteration_value}-iteration RAOs: {matching_count}/"
+            f"{len(iteration_counts)} "
+            f"({matching_count / len(iteration_counts) * 100:.2f}%)"
+        )
+    print(
+        f"Numerically unchanged RAOs (max update <= 1e-8): "
+        f"{np.sum(update_sizes <= 1e-8)}/{len(update_sizes)} "
+        f"({np.mean(update_sizes <= 1e-8) * 100:.2f}%)"
+    )
+    print(
+        f"Successful optimizations: {success_count}/"
+        f"{len(backoff_optimizer_history)}"
+    )
+
+    unique_iterations, iteration_frequencies = np.unique(
+        iteration_counts,
+        return_counts=True,
+    )
+    iteration_percentages = (
+        iteration_frequencies / len(iteration_counts) * 100.0
+    )
+    bar_positions = np.arange(len(unique_iterations))
+    figure, axis = plt.subplots(figsize=(10, 6), dpi=120)
+    bars = axis.bar(
+        bar_positions,
+        iteration_frequencies,
+        width=0.7,
+    )
+    for bar, frequency, percentage in zip(
+        bars,
+        iteration_frequencies,
+        iteration_percentages,
+    ):
+        axis.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{frequency}\n({percentage:.1f}%)",
+            ha="center",
+            va="bottom",
+        )
+    axis.set(
+        title="Distribution of Backoff Optimization Iterations",
+        xlabel="Number of L-BFGS-B iterations",
+        ylabel="Number of RAOs",
+        xticks=bar_positions,
+        xticklabels=[str(value) for value in unique_iterations],
+    )
+    axis.yaxis.set_major_locator(MaxNLocator(integer=True))
+    axis.set_ylim(0, max(iteration_frequencies) * 1.18)
+    axis.grid(axis="y", alpha=0.3)
+    axis.set_axisbelow(True)
+    figure.tight_layout()
+    iteration_pdf_filename = "backoff_optimizer_iteration_distribution.pdf"
+    figure.savefig(
+        iteration_pdf_filename,
+        format="pdf",
+        bbox_inches="tight",
+    )
+    print(f"Saved iteration distribution figure to {iteration_pdf_filename}")
     plt.show()
-elif m[1] == 1:
-    print("No pi history was recorded; skip state distribution plot.")
 
-
-# Precomputed p_s error over time.
-ps_history = results[result_key]["RunHistory"].get("ps_history", [])
+# Keep the scalar diagnostics without generating the previous Mode 0 figures.
+ps_history = g.get("ps_history", [])
 ps_mae = np.nan
 if len(ps_history) > 0:
-    ps_time = np.array([item["time_slot"] for item in ps_history])
-    ps_error = np.array([item["error"] for item in ps_history])
+    ps_error = np.asarray(
+        [item["error"] for item in ps_history],
+        dtype=float,
+    )
     ps_mae = np.mean(np.abs(ps_error))
-    real_ps = np.array([item["real"] for item in ps_history])
-    precomputed_ps = np.array([item["precomputed"] for item in ps_history])
-
-    plt.figure(figsize=(10, 6))
-    plt.axhline(y=0.0, color="black", linestyle="--", linewidth=1.0, alpha=0.6)
-    plt.plot(ps_time, ps_error, label=r"Error: real $p_s$ - estimated $p_s$", color="red", linewidth=1.3)
-    plt.title(r"$p_s$ Error Over Time")
-    plt.xlabel("Time Slot (n)")
-    plt.ylabel(r"$p_s$ Error")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(ps_time, real_ps, label=r"Real $p_s$", linewidth=1.3)
-    plt.plot(ps_time, precomputed_ps, label=r"Precomputed $p_s$", linewidth=1.3)
-    plt.title(r"Real vs. Precomputed $p_s$")
-    plt.xlabel("Time Slot (n)")
-    plt.ylabel(r"$p_s$")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-elif m[1] == 1:
-    print("No p_s history was recorded; skip p_s error plots.")
 
 print("--- Test Complete ---")
-print(f"Packet Loss Rate: {results[result_key]['SuccessRate']:.4f}")
-print(f"Average Throughput: {single_throughput:.2f}")
+print(f"Packet Loss Rate: {b:.4f}")
+print(f"Average Throughput: {a:.2f}")
+single_delay_ms = g.get("average_delay_ms", np.nan)
 print(f"Average Delay (ms): {single_delay_ms:.2f}")
 if m[1] == 1:
     print(f"p_s MAE: {ps_mae:.6f}" if np.isfinite(ps_mae) else "p_s MAE: N/A")
