@@ -285,4 +285,9 @@ def main(NUM_SAT):
     )
 
 if __name__ == "__main__":
-    main(NUM_SAT=4)
+    for num_orbit_planes in (1, 2, 4):
+        print(
+            f"\n=== Generating preselection data for "
+            f"{num_orbit_planes} orbital plane(s) ==="
+        )
+        main(NUM_SAT=num_orbit_planes)
