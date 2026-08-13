@@ -2,7 +2,7 @@ from collections import Counter
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import TwoSlopeNorm
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from matplotlib.ticker import MaxNLocator
 
 import Load_estimator
@@ -147,7 +147,7 @@ import main
 #
 # =============================================================================
 EXPERIMENT_CODE = 2
-SIM_SECONDS = 180
+SIM_SECONDS = 10
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -339,10 +339,21 @@ if RHO_SWEEP_PB:
     heatmap_data = average_p_b_matrix.T
     masked_heatmap_data = np.ma.masked_invalid(heatmap_data)
     heatmap_norm = TwoSlopeNorm(vmin=0.0, vcenter=0.8, vmax=1.0)
+    heatmap_cmap = LinearSegmentedColormap.from_list(
+        "light_backoff_probability",
+        [
+            "#f7fbff",
+            "#d9edf7",
+            "#9ecae1",
+            "#74c476",
+            "#fee391",
+            "#fdae6b",
+        ],
+    )
     im = plt.imshow(
         masked_heatmap_data,
         aspect="auto",
-        cmap="viridis",
+        cmap=heatmap_cmap,
         norm=heatmap_norm,
         interpolation="nearest",
     )
@@ -2565,6 +2576,10 @@ if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
     TOP_K_ORBIT_OUTPUT_PDF = Path(
         "output/pdf/topk_orbit_plane_tradeoff.pdf"
     )
+    TOP_K_ORBIT_PANEL_PNG = Path("topk_orbit_plane_comparison.png")
+    TOP_K_ORBIT_PANEL_PDF = Path(
+        "output/pdf/topk_orbit_plane_comparison.pdf"
+    )
     warnings.filterwarnings(
         "ignore",
         message="invalid value encountered in reduce",
@@ -3017,6 +3032,114 @@ if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
     TOP_K_ORBIT_OUTPUT_PDF.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(TOP_K_ORBIT_OUTPUT_PDF, bbox_inches="tight")
 
+    policy_axis = np.arange(len(TOP_K_ORBIT_POLICIES))
+    policy_labels = [
+        policy_name
+        for policy_name, _, _ in TOP_K_ORBIT_POLICIES
+    ]
+    plane_markers = {
+        1: "o",
+        2: "s",
+        3: "^",
+        4: "D",
+    }
+    panel_figure, (success_axis, group_axis) = plt.subplots(
+        2,
+        1,
+        figsize=(10, 8),
+        dpi=140,
+        sharex=True,
+    )
+    panel_legend_handles = []
+
+    for scenario_data in mode19_scenarios:
+        orbit_plane_count = scenario_data["orbit_plane_count"]
+        color, line_style = plane_styles[orbit_plane_count]
+        marker = plane_markers[orbit_plane_count]
+        plane_summary = [
+            next(
+                item
+                for item in mode19_summary
+                if item["orbit_plane_count"] == orbit_plane_count
+                and item["policy"] == policy_name
+            )
+            for policy_name, _, _ in TOP_K_ORBIT_POLICIES
+        ]
+        mean_expected_ps = np.array([
+            item["mean_expected_ps"] for item in plane_summary
+        ])
+        average_group_counts = np.array([
+            item["average_group_count"] for item in plane_summary
+        ])
+        plane_label = (
+            "1 orbital plane"
+            if orbit_plane_count == 1
+            else f"{orbit_plane_count} orbital planes"
+        )
+
+        success_axis.plot(
+            policy_axis,
+            mean_expected_ps,
+            color=color,
+            linestyle=line_style,
+            marker=marker,
+            markersize=6,
+            linewidth=1.7,
+            label=plane_label,
+        )
+        group_axis.plot(
+            policy_axis,
+            average_group_counts,
+            color=color,
+            linestyle=line_style,
+            marker=marker,
+            markersize=6,
+            linewidth=1.7,
+            label=plane_label,
+        )
+        panel_legend_handles.append(Line2D(
+            [0],
+            [0],
+            color=color,
+            linestyle=line_style,
+            marker=marker,
+            markersize=6,
+            linewidth=1.7,
+            label=plane_label,
+        ))
+
+    success_axis.set(
+        title="Preamble Transmission Success Probability",
+        ylabel="Preamble transmission success probability",
+    )
+    group_axis.set(
+        title="Grouping Complexity",
+        xlabel="Grouping policy",
+        ylabel="Average number of groups",
+        xticks=policy_axis,
+        xticklabels=policy_labels,
+    )
+    for panel_axis in (success_axis, group_axis):
+        panel_axis.grid(True, alpha=0.25)
+        panel_axis.set_axisbelow(True)
+
+    panel_figure.suptitle(
+        "Effect of Grouping Granularity under Different Numbers of "
+        "Orbital Planes",
+        y=0.995,
+    )
+    panel_figure.legend(
+        handles=panel_legend_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.955),
+        ncol=4,
+        frameon=True,
+    )
+    panel_figure.tight_layout(rect=(0, 0, 1, 0.91))
+    panel_figure.savefig(TOP_K_ORBIT_PANEL_PNG, bbox_inches="tight")
+    TOP_K_ORBIT_PANEL_PDF.parent.mkdir(parents=True, exist_ok=True)
+    panel_figure.savefig(TOP_K_ORBIT_PANEL_PDF, bbox_inches="tight")
+
     print("\n--- Top-k Orbit-Plane Comparison Complete ---")
     print(
         f"{'Planes':>6} | {'Policy':>7} | {'Mean p_s':>10} | "
@@ -3058,6 +3181,7 @@ if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
     print(f"Saved RAO results to {TOP_K_ORBIT_OUTPUT_CSV}")
     print(f"Saved summary to {TOP_K_ORBIT_SUMMARY_CSV}")
     print(f"Saved tradeoff figure to {TOP_K_ORBIT_OUTPUT_PDF}")
+    print(f"Saved two-panel comparison figure to {TOP_K_ORBIT_PANEL_PDF}")
     plt.show()
     raise SystemExit
 
