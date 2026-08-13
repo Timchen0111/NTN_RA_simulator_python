@@ -2,6 +2,7 @@ from collections import Counter
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import TwoSlopeNorm
 from matplotlib.ticker import MaxNLocator
 
 import Load_estimator
@@ -137,7 +138,7 @@ import main
 #    The 3-plane scenario reuses the original satellite pool and group table.
 #
 # =============================================================================
-EXPERIMENT_CODE = 16
+EXPERIMENT_CODE = 2
 SIM_SECONDS = 180
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
@@ -325,9 +326,17 @@ if RHO_SWEEP_PB:
     plt.figure(figsize=(10, 6))
     heatmap_data = average_p_b_matrix.T
     masked_heatmap_data = np.ma.masked_invalid(heatmap_data)
-    im = plt.imshow(masked_heatmap_data, aspect="auto", cmap="YlGnBu", vmin=0.0, vmax=1.0)
+    heatmap_norm = TwoSlopeNorm(vmin=0.0, vcenter=0.8, vmax=1.0)
+    im = plt.imshow(
+        masked_heatmap_data,
+        aspect="auto",
+        cmap="viridis",
+        norm=heatmap_norm,
+        interpolation="nearest",
+    )
     cbar = plt.colorbar(im)
-    cbar.set_label("Average backoff probability")
+    cbar.set_label("Average backoff probability (expanded above 0.8)")
+    cbar.set_ticks([0.0, 0.2, 0.4, 0.6, 0.8, 0.85, 0.9, 0.95, 1.0])
 
     plt.title("Average Backoff Probability under Different Arrival Rates")
     plt.xlabel("Per-UE arrival rate (packets/s)")
@@ -1868,12 +1877,10 @@ if RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY:
         )
         for guess_index in range(NUM_RANDOM_INITIAL_GUESSES)
     ]
-    print("\nRandom backoff-vector initial guesses:")
-    for label, initial_guess in initial_guesses:
-        initial_guess_text = ", ".join(
-            f"{value:.6f}" for value in initial_guess
-        )
-        print(f"{label:>10}: [{initial_guess_text}]")
+    print(
+        f"\nGenerated {NUM_RANDOM_INITIAL_GUESSES} random "
+        "backoff-vector initial guesses."
+    )
 
     qos_distribution = np.zeros(20, dtype=float)
     qos_distribution[[4, 9, 14, 19]] = 0.25
@@ -1887,7 +1894,14 @@ if RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY:
         p_s = float(ps_record["control"])
 
         rao_results = {}
-        for label, initial_guess in initial_guesses:
+        print(
+            f"\nRAO {rao}: running "
+            f"{NUM_RANDOM_INITIAL_GUESSES} random initial guesses"
+        )
+        for guess_number, (label, initial_guess) in enumerate(
+            initial_guesses,
+            start=1,
+        ):
             optimized_pb, _ = backoff_control.proposed_backoff_control(
                 n_tilde,
                 np.asarray(initial_guess, dtype=float),
@@ -1918,16 +1932,14 @@ if RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY:
                 "objective": float(objective),
                 "p_b": np.asarray(optimized_pb, dtype=float),
             }
-
-        print(f"\nRAO {rao} optimizer results:")
-        for label, result in rao_results.items():
-            p_b_text = ", ".join(
-                f"{value:.6f}" for value in result["p_b"]
-            )
-            print(
-                f"{label:>10}: loss={result['objective']:.10f}, "
-                f"p_b=[{p_b_text}]"
-            )
+            if (
+                guess_number % 10 == 0
+                or guess_number == NUM_RANDOM_INITIAL_GUESSES
+            ):
+                print(
+                    f"RAO {rao}: completed {guess_number}/"
+                    f"{NUM_RANDOM_INITIAL_GUESSES}"
+                )
 
         objective_values = np.asarray(
             [result["objective"] for result in rao_results.values()],
