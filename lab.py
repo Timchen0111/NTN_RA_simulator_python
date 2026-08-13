@@ -3109,11 +3109,9 @@ if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
         ))
 
     success_axis.set(
-        title="Preamble Transmission Success Probability",
         ylabel="Preamble transmission success probability",
     )
     group_axis.set(
-        title="Grouping Complexity",
         xlabel="Grouping policy",
         ylabel="Average number of groups",
         xticks=policy_axis,
