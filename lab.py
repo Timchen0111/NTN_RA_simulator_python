@@ -137,6 +137,14 @@ import main
 #    1-, 2-, 3-, and 4-orbit-plane scenarios at 200 km and 1.5 packets/s.
 #    The 3-plane scenario reuses the original satellite pool and group table.
 #
+# 18 RUN_TOP_K_GROUPING_ANALYSIS
+#    Reproduce Fig. 11 by comparing Global, Top-1, Top-2, and Top-3 grouping
+#    policies using the precomputed ordered Top-3 group table.
+#
+# 19 RUN_TOP_K_ORBIT_PLANE_COMPARISON
+#    Compare the grouping performance-complexity tradeoff under independently
+#    generated 1-, 2-, 3-, and 4-orbit-plane scenarios.
+#
 # =============================================================================
 EXPERIMENT_CODE = 2
 SIM_SECONDS = 180
@@ -165,6 +173,8 @@ EXPERIMENT_SWITCHES = {
     15: "Service radius comparison",
     16: "Backoff optimizer initial-guess sensitivity",
     17: "Orbit plane count comparison",
+    18: "Top-k grouping policy analysis",
+    19: "Top-k grouping comparison across orbit plane counts",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -186,6 +196,8 @@ RUN_COLLISION_RATE_COMPARISON = EXPERIMENT_CODE == 14
 RUN_SERVICE_RADIUS_COMPARISON = EXPERIMENT_CODE == 15
 RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY = EXPERIMENT_CODE == 16
 RUN_ORBIT_PLANE_COMPARISON = EXPERIMENT_CODE == 17
+RUN_TOP_K_GROUPING_ANALYSIS = EXPERIMENT_CODE == 18
+RUN_TOP_K_ORBIT_PLANE_COMPARISON = EXPERIMENT_CODE == 19
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -2159,6 +2171,894 @@ if RUN_ORBIT_PLANE_COMPARISON:
                     else ""
                 )
             )
+    raise SystemExit
+
+
+if RUN_TOP_K_GROUPING_ANALYSIS:
+    import csv
+    import warnings
+    from datetime import timedelta
+    from pathlib import Path
+
+    from skyfield.api import load
+    from skyfield.framelib import itrs
+
+    from satellite_preselection import generate_uniform_locations
+    from satellite_preselection_top3 import prepare_ue_geometry
+    from scenario_time import get_tle_scenario_metadata
+    from selection import solve_group_selection_policy
+
+    TABLE_FILE = "group_ps_table_top3.npz"
+    OUTPUT_CSV = "topk_ss_channel_success_all_rao.csv"
+    OUTPUT_FIGURE = "topk_ss_channel_success_all_rao.png"
+    OUTPUT_PDF = Path("output/pdf/topk_ss_channel_success_all_rao.pdf")
+    TOP_K_SEED = 42
+    TOP_K_EPSILON = 0.001
+    TOP_K_POLICIES = (
+        ("Global", 0),
+        ("Top-1", 1),
+        ("Top-2", 2),
+        ("Top-3", 3),
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message="invalid value encountered in reduce",
+        category=RuntimeWarning,
+    )
+
+    def get_top_k_ue_channel_data(real_sats, current_time, ue_geometry):
+        ecef, east, north, up = ue_geometry
+        sat_ecef = np.stack([
+            sat.at(current_time).frame_xyz(itrs).km
+            for sat in real_sats
+        ])
+        delta = sat_ecef[None, :, :] - ecef[:, None, :]
+        up_component = np.einsum("nkd,nd->nk", delta, up)
+        east_component = np.einsum("nkd,nd->nk", delta, east)
+        north_component = np.einsum("nkd,nd->nk", delta, north)
+        angles = np.degrees(np.arctan2(
+            up_component,
+            np.hypot(east_component, north_component),
+        ))
+        distances = np.linalg.norm(delta, axis=2)
+        channel_ps = main.estimate_channel_success_probability(
+            angles,
+            distances,
+        )
+        ranking = np.argsort(angles, axis=1)[:, ::-1]
+        return channel_ps, ranking
+
+    def merge_top_k_groups(weights_max_k, ps_max_k, prefix_length):
+        weights = {}
+        weighted_ps = {}
+        for max_k_group, weight in weights_max_k.items():
+            group = (
+                tuple(max_k_group[:prefix_length])
+                if prefix_length
+                else ()
+            )
+            weights[group] = weights.get(group, 0.0) + weight
+            weighted_ps.setdefault(
+                group,
+                np.zeros_like(ps_max_k[max_k_group]),
+            )
+            weighted_ps[group] += weight * ps_max_k[max_k_group]
+        ps_by_group = {
+            group: weighted_ps[group] / weights[group]
+            for group in weights
+        }
+        return weights, ps_by_group
+
+    def evaluate_top_k_policy(
+        policy,
+        prefix_length,
+        weights,
+        group_ps,
+        channel_ps,
+        ranking,
+        selection_uniforms,
+        channel_uniforms,
+    ):
+        num_ues, num_sats = channel_ps.shape
+        selection_ps = np.zeros((num_ues, num_sats))
+        fallback_count = 0
+
+        for ue_index in range(num_ues):
+            group = (
+                tuple(ranking[ue_index, :prefix_length])
+                if prefix_length
+                else ()
+            )
+            if group in policy:
+                selection_ps[ue_index] = policy[group]
+            else:
+                selection_ps[ue_index, ranking[ue_index, 0]] = 1.0
+                fallback_count += 1
+
+        effective_load = sum(
+            weights[group] * policy[group] * group_ps[group]
+            for group in weights
+        )
+        predicted_ps = float(np.sum(effective_load))
+        imbalance = float(np.sum(
+            (effective_load - predicted_ps / num_sats) ** 2
+        ))
+        per_ue_expected_ps = float(np.mean(np.sum(
+            selection_ps * channel_ps,
+            axis=1,
+        )))
+
+        selected_sats = np.sum(
+            selection_uniforms[:, None] > np.cumsum(selection_ps, axis=1),
+            axis=1,
+        )
+        selected_sats = np.minimum(selected_sats, num_sats - 1)
+        ue_indices = np.arange(num_ues)
+        channel_passed = (
+            channel_uniforms[ue_indices, selected_sats]
+            < channel_ps[ue_indices, selected_sats]
+        )
+        return {
+            "expected_ps": predicted_ps,
+            "per_ue_expected_ps": per_ue_expected_ps,
+            "simulated_channel_success_rate": float(np.mean(channel_passed)),
+            "imbalance": imbalance,
+            "fallbacks": fallback_count,
+        }
+
+    def save_top_k_tradeoff_figure(results):
+        names = [name for name, _ in TOP_K_POLICIES]
+        mean_ps = np.array([
+            np.mean([
+                float(row["expected_ps"])
+                for row in results
+                if row["policy"] == name
+            ])
+            for name in names
+        ])
+        mean_groups = np.array([
+            np.mean([
+                float(row["groups"])
+                for row in results
+                if row["policy"] == name
+            ])
+            for name in names
+        ])
+
+        x = np.arange(len(names))
+        width = 0.36
+        figure, success_axis = plt.subplots(figsize=(9.5, 5.5), dpi=140)
+        group_axis = success_axis.twinx()
+
+        success_bars = success_axis.bar(
+            x - width / 2,
+            mean_ps,
+            width,
+            color="#4C78A8",
+            alpha=0.9,
+            label="Preamble transmission success probability",
+        )
+        success_axis.bar_label(success_bars, fmt="%.4f", padding=3)
+        success_axis.set_ylabel(
+            "Preamble transmission success probability"
+        )
+        success_axis.set_ylim(0, 0.75)
+
+        group_bars = group_axis.bar(
+            x + width / 2,
+            mean_groups,
+            width,
+            color="#6B7280",
+            alpha=0.9,
+            label="Average number of groups",
+        )
+        group_axis.bar_label(group_bars, fmt="%.1f", padding=3)
+        group_axis.set_ylabel("Average number of groups")
+        group_axis.set_ylim(0, 40)
+
+        success_axis.set(
+            title=(
+                "Preamble Transmission Success Probability under "
+                "Different Grouping Policies"
+            ),
+            xlabel="Grouping policy",
+            xticks=x,
+            xticklabels=names,
+        )
+        success_axis.grid(axis="y", alpha=0.25)
+        success_axis.set_axisbelow(True)
+        success_axis.legend(
+            [success_bars, group_bars],
+            [
+                "Preamble transmission success probability",
+                "Average number of groups",
+            ],
+            loc="upper left",
+        )
+        figure.tight_layout()
+        figure.savefig(OUTPUT_FIGURE, bbox_inches="tight")
+        OUTPUT_PDF.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(OUTPUT_PDF, bbox_inches="tight")
+        plt.close(figure)
+
+    with np.load(TABLE_FILE, allow_pickle=True) as top_k_data:
+        weight_table = top_k_data["group_weight_table"]
+        ps_table = top_k_data["group_ps_table"]
+        rao_indices = np.asarray(top_k_data["rao_indices"], dtype=int)
+        trao_ms = int(top_k_data["trao_ms"])
+        num_ues = int(top_k_data["num_points"])
+        table_seed = int(top_k_data["random_seed"])
+        center = (
+            float(top_k_data["center_lat"]),
+            float(top_k_data["center_lon"]),
+        )
+        radius_km = float(top_k_data["radius_km"])
+        table_satellite_ids = np.asarray(
+            top_k_data["sat_norad_ids"],
+            dtype=int,
+        )
+        table_start_dt_iso = str(top_k_data["scenario_start_dt_iso"])
+        table_tle_hash = str(top_k_data["tle_file_sha256"])
+
+    real_sats = main.load_fixed_satellites()
+    actual_satellite_ids = np.array([
+        int(sat.model.satnum) for sat in real_sats
+    ])
+    if not np.array_equal(actual_satellite_ids, table_satellite_ids):
+        raise ValueError("Satellite pool does not match the Top-3 table.")
+
+    np.random.seed(table_seed)
+    locations = generate_uniform_locations(num_ues, center, radius_km)
+    ue_geometry = prepare_ue_geometry(locations)
+    scenario = get_tle_scenario_metadata()
+    if table_start_dt_iso != scenario["start_dt_iso"]:
+        raise ValueError(
+            "Top-3 table and current scenario start time do not match."
+        )
+    if table_tle_hash != scenario["tle_file_sha256"]:
+        raise ValueError("Top-3 table and current TLE file do not match.")
+    timescale = load.timescale()
+    random_generator = np.random.default_rng(TOP_K_SEED)
+    rows = np.arange(len(rao_indices))
+    top_k_results = []
+
+    for row in rows:
+        actual_rao = int(rao_indices[row])
+        current_dt = scenario["start_dt"] + timedelta(
+            milliseconds=actual_rao * trao_ms
+        )
+        current_time = timescale.from_datetime(current_dt)
+        channel_ps, ranking = get_top_k_ue_channel_data(
+            real_sats,
+            current_time,
+            ue_geometry,
+        )
+        selection_uniforms = random_generator.random(num_ues)
+        channel_uniforms = random_generator.random(channel_ps.shape)
+
+        for name, prefix_length in TOP_K_POLICIES:
+            weights, group_ps = merge_top_k_groups(
+                weight_table[row],
+                ps_table[row],
+                prefix_length,
+            )
+            policy = solve_group_selection_policy(
+                weights,
+                group_ps,
+                sat_num=len(real_sats),
+                imbalance_epsilon=TOP_K_EPSILON,
+                initial_policy=None,
+            )
+            metrics = evaluate_top_k_policy(
+                policy,
+                prefix_length,
+                weights,
+                group_ps,
+                channel_ps,
+                ranking,
+                selection_uniforms,
+                channel_uniforms,
+            )
+            top_k_results.append({
+                "rao": actual_rao,
+                "policy": name,
+                "groups": len(weights),
+                **metrics,
+            })
+
+    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=top_k_results[0])
+        writer.writeheader()
+        writer.writerows(top_k_results)
+
+    policy_names = [name for name, _ in TOP_K_POLICIES]
+    predicted_values_by_policy = [
+        np.array([
+            result["expected_ps"]
+            for result in top_k_results
+            if result["policy"] == name
+        ])
+        for name in policy_names
+    ]
+    simulated_values_by_policy = [
+        np.array([
+            result["simulated_channel_success_rate"]
+            for result in top_k_results
+            if result["policy"] == name
+        ])
+        for name in policy_names
+    ]
+    save_top_k_tradeoff_figure(top_k_results)
+
+    print(
+        f"Analyzed all {len(rows)} table RAOs: "
+        f"{int(rao_indices[rows[0]])} to "
+        f"{int(rao_indices[rows[-1]])}"
+    )
+    for name, predicted_values, simulated_values in zip(
+        policy_names,
+        predicted_values_by_policy,
+        simulated_values_by_policy,
+    ):
+        policy_rows = [
+            result
+            for result in top_k_results
+            if result["policy"] == name
+        ]
+        print(
+            f"{name}: expected p_s={predicted_values.mean():.6f}, "
+            f"per-UE simulation={simulated_values.mean():.6f}, "
+            f"mean groups="
+            f"{np.mean([result['groups'] for result in policy_rows]):.1f}, "
+            f"max imbalance="
+            f"{max(result['imbalance'] for result in policy_rows):.6g}, "
+            f"fallbacks="
+            f"{sum(result['fallbacks'] for result in policy_rows)}"
+        )
+    raise SystemExit
+
+
+if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
+    import csv
+    import warnings
+    from pathlib import Path
+
+    from matplotlib.lines import Line2D
+
+    from scenario_time import get_tle_scenario_metadata
+    from selection import solve_group_selection_policy
+
+    TOP_K_ORBIT_SCENARIOS = (
+        (
+            1,
+            Path("group_ps_table_planes_1_top3.npz"),
+            Path("group_ps_table_planes_1.npz"),
+        ),
+        (
+            2,
+            Path("group_ps_table_planes_2_top3.npz"),
+            Path("group_ps_table_planes_2.npz"),
+        ),
+        (
+            3,
+            Path("group_ps_table_top3.npz"),
+            Path("group_ps_table.npz"),
+        ),
+        (
+            4,
+            Path("group_ps_table_planes_4_top3.npz"),
+            Path("group_ps_table_planes_4.npz"),
+        ),
+    )
+    TOP_K_ORBIT_POLICIES = (
+        ("Global", 0, "o"),
+        ("Top-1", 1, "s"),
+        ("Top-2", 2, "^"),
+        ("Top-3", 3, "D"),
+    )
+    TOP_K_ORBIT_EPSILON = 0.001
+    TOP_K_ORBIT_OUTPUT_CSV = Path("topk_orbit_plane_comparison.csv")
+    TOP_K_ORBIT_SUMMARY_CSV = Path(
+        "topk_orbit_plane_comparison_summary.csv"
+    )
+    TOP_K_ORBIT_OUTPUT_PNG = Path("topk_orbit_plane_tradeoff.png")
+    TOP_K_ORBIT_OUTPUT_PDF = Path(
+        "output/pdf/topk_orbit_plane_tradeoff.pdf"
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message="invalid value encountered in reduce",
+        category=RuntimeWarning,
+    )
+
+    def merge_mode19_groups(weights_top3, ps_top3, prefix_length):
+        weights = {}
+        weighted_ps = {}
+        for top3_group, weight in weights_top3.items():
+            top3_group = tuple(top3_group)
+            if len(top3_group) != 3:
+                raise ValueError(
+                    "Mode 19 requires ordered Top-3 group keys; "
+                    f"received {top3_group}."
+                )
+            group = top3_group[:prefix_length] if prefix_length else ()
+            weights[group] = weights.get(group, 0.0) + float(weight)
+            weighted_ps.setdefault(
+                group,
+                np.zeros_like(ps_top3[top3_group], dtype=float),
+            )
+            weighted_ps[group] += (
+                float(weight)
+                * np.asarray(ps_top3[top3_group], dtype=float)
+            )
+        ps_by_group = {
+            group: weighted_ps[group] / weights[group]
+            for group in weights
+        }
+        return weights, ps_by_group
+
+    def load_mode19_scenario(
+        orbit_plane_count,
+        top3_table_path,
+        reference_table_path,
+        current_scenario_metadata,
+    ):
+        if not top3_table_path.exists():
+            raise FileNotFoundError(
+                f"Mode 19 Top-3 table not found: {top3_table_path}"
+            )
+        if not reference_table_path.exists():
+            raise FileNotFoundError(
+                f"Mode 19 reference table not found: {reference_table_path}"
+            )
+
+        required_top3_keys = (
+            "group_weight_table",
+            "group_ps_table",
+            "sat_norad_ids",
+            "scenario_start_dt_iso",
+            "tle_file_sha256",
+            "seconds",
+            "trao_ms",
+            "num_points",
+            "rao_indices",
+            "rao_step",
+            "group_size",
+            "random_seed",
+            "center_lat",
+            "center_lon",
+            "radius_km",
+        )
+        with np.load(top3_table_path, allow_pickle=True) as top3_data:
+            missing_keys = [
+                key for key in required_top3_keys
+                if key not in top3_data.files
+            ]
+            if missing_keys:
+                raise ValueError(
+                    f"{top3_table_path} is missing required fields: "
+                    f"{missing_keys}"
+                )
+            scenario_data = {
+                "orbit_plane_count": int(orbit_plane_count),
+                "top3_table_path": top3_table_path,
+                "weight_table": top3_data["group_weight_table"],
+                "ps_table": top3_data["group_ps_table"],
+                "satellite_ids": np.asarray(
+                    top3_data["sat_norad_ids"],
+                    dtype=int,
+                ),
+                "scenario_start_dt_iso": str(
+                    top3_data["scenario_start_dt_iso"]
+                ),
+                "tle_file_sha256": str(top3_data["tle_file_sha256"]),
+                "seconds": int(top3_data["seconds"]),
+                "trao_ms": int(top3_data["trao_ms"]),
+                "num_points": int(top3_data["num_points"]),
+                "rao_indices": np.asarray(
+                    top3_data["rao_indices"],
+                    dtype=int,
+                ),
+                "rao_step": int(top3_data["rao_step"]),
+                "group_size": int(top3_data["group_size"]),
+                "random_seed": int(top3_data["random_seed"]),
+                "center_lat": float(top3_data["center_lat"]),
+                "center_lon": float(top3_data["center_lon"]),
+                "radius_km": float(top3_data["radius_km"]),
+            }
+            if "orbit_plane_count" in top3_data.files:
+                stored_plane_count = int(top3_data["orbit_plane_count"])
+                if stored_plane_count != orbit_plane_count:
+                    raise ValueError(
+                        f"{top3_table_path} declares {stored_plane_count} "
+                        f"orbital planes; expected {orbit_plane_count}."
+                    )
+
+        if scenario_data["group_size"] != 3:
+            raise ValueError(
+                f"{top3_table_path} group_size is "
+                f"{scenario_data['group_size']}; expected 3."
+            )
+        if scenario_data["scenario_start_dt_iso"] != (
+            current_scenario_metadata["start_dt_iso"]
+        ):
+            raise ValueError(
+                f"{top3_table_path} and current scenario start time "
+                "do not match."
+            )
+        if scenario_data["tle_file_sha256"] != (
+            current_scenario_metadata["tle_file_sha256"]
+        ):
+            raise ValueError(
+                f"{top3_table_path} and current TLE file do not match."
+            )
+
+        with np.load(reference_table_path, allow_pickle=True) as reference:
+            required_reference_keys = (
+                "sat_norad_ids",
+                "scenario_start_dt_iso",
+                "tle_file_sha256",
+                "seconds",
+                "trao_ms",
+                "num_points",
+            )
+            missing_reference_keys = [
+                key for key in required_reference_keys
+                if key not in reference.files
+            ]
+            if missing_reference_keys:
+                raise ValueError(
+                    f"{reference_table_path} is missing required fields: "
+                    f"{missing_reference_keys}"
+                )
+            reference_satellite_ids = np.asarray(
+                reference["sat_norad_ids"],
+                dtype=int,
+            )
+            if not np.array_equal(
+                scenario_data["satellite_ids"],
+                reference_satellite_ids,
+            ):
+                raise ValueError(
+                    f"{top3_table_path} satellite IDs do not match "
+                    f"{reference_table_path}."
+                )
+            if str(reference["scenario_start_dt_iso"]) != (
+                scenario_data["scenario_start_dt_iso"]
+            ):
+                raise ValueError(
+                    f"{top3_table_path} and {reference_table_path} "
+                    "start times do not match."
+                )
+            if str(reference["tle_file_sha256"]) != (
+                scenario_data["tle_file_sha256"]
+            ):
+                raise ValueError(
+                    f"{top3_table_path} and {reference_table_path} "
+                    "TLE hashes do not match."
+                )
+            for metadata_key in ("seconds", "trao_ms", "num_points"):
+                if int(reference[metadata_key]) != scenario_data[metadata_key]:
+                    raise ValueError(
+                        f"{top3_table_path} and {reference_table_path} "
+                        f"{metadata_key} values do not match."
+                    )
+            reference_radius = (
+                float(reference["radius_km"])
+                if "radius_km" in reference.files
+                else 200.0
+            )
+            if not np.isclose(
+                reference_radius,
+                scenario_data["radius_km"],
+            ):
+                raise ValueError(
+                    f"{top3_table_path} and {reference_table_path} "
+                    "service radii do not match."
+                )
+
+        if len(scenario_data["weight_table"]) != len(
+            scenario_data["rao_indices"]
+        ) or len(scenario_data["ps_table"]) != len(
+            scenario_data["rao_indices"]
+        ):
+            raise ValueError(
+                f"{top3_table_path} table rows and RAO indices do not match."
+            )
+        return scenario_data
+
+    current_scenario_metadata = get_tle_scenario_metadata()
+    mode19_scenarios = [
+        load_mode19_scenario(
+            orbit_plane_count,
+            top3_table_path,
+            reference_table_path,
+            current_scenario_metadata,
+        )
+        for (
+            orbit_plane_count,
+            top3_table_path,
+            reference_table_path,
+        ) in TOP_K_ORBIT_SCENARIOS
+    ]
+
+    baseline_scenario = mode19_scenarios[0]
+    for scenario_data in mode19_scenarios[1:]:
+        for metadata_key in (
+            "scenario_start_dt_iso",
+            "tle_file_sha256",
+            "seconds",
+            "trao_ms",
+            "num_points",
+            "rao_step",
+            "random_seed",
+        ):
+            if scenario_data[metadata_key] != baseline_scenario[metadata_key]:
+                raise ValueError(
+                    "Mode 19 Top-3 tables use different "
+                    f"{metadata_key} values."
+                )
+        for metadata_key in ("center_lat", "center_lon", "radius_km"):
+            if not np.isclose(
+                scenario_data[metadata_key],
+                baseline_scenario[metadata_key],
+            ):
+                raise ValueError(
+                    "Mode 19 Top-3 tables use different "
+                    f"{metadata_key} values."
+                )
+        if not np.array_equal(
+            scenario_data["rao_indices"],
+            baseline_scenario["rao_indices"],
+        ):
+            raise ValueError(
+                "Mode 19 Top-3 tables do not use identical sampled RAOs."
+            )
+
+    mode19_results = []
+    for scenario_data in mode19_scenarios:
+        orbit_plane_count = scenario_data["orbit_plane_count"]
+        weight_table = scenario_data["weight_table"]
+        ps_table = scenario_data["ps_table"]
+        rao_indices = scenario_data["rao_indices"]
+        satellite_count = len(scenario_data["satellite_ids"])
+
+        print(
+            f"\nRunning Mode 19 grouping analysis: "
+            f"{orbit_plane_count} orbital plane(s), "
+            f"{len(rao_indices)} sampled RAOs"
+        )
+        for row_index, actual_rao in enumerate(rao_indices):
+            for policy_name, prefix_length, _ in TOP_K_ORBIT_POLICIES:
+                weights, group_ps = merge_mode19_groups(
+                    weight_table[row_index],
+                    ps_table[row_index],
+                    prefix_length,
+                )
+                policy = solve_group_selection_policy(
+                    weights,
+                    group_ps,
+                    sat_num=satellite_count,
+                    imbalance_epsilon=TOP_K_ORBIT_EPSILON,
+                    initial_policy=None,
+                )
+                effective_load = sum(
+                    weights[group]
+                    * np.asarray(policy[group], dtype=float)
+                    * np.asarray(group_ps[group], dtype=float)
+                    for group in weights
+                )
+                expected_ps = float(np.sum(effective_load))
+                imbalance = float(np.sum(
+                    (
+                        effective_load
+                        - expected_ps / satellite_count
+                    ) ** 2
+                ))
+                mode19_results.append({
+                    "orbit_plane_count": orbit_plane_count,
+                    "rao": int(actual_rao),
+                    "policy": policy_name,
+                    "expected_ps": expected_ps,
+                    "group_count": len(weights),
+                    "imbalance": imbalance,
+                })
+
+            completed_rows = row_index + 1
+            if completed_rows % 20 == 0 or completed_rows == len(rao_indices):
+                print(
+                    f"{orbit_plane_count}-plane: completed "
+                    f"{completed_rows}/{len(rao_indices)} sampled RAOs"
+                )
+
+    with TOP_K_ORBIT_OUTPUT_CSV.open(
+        "w",
+        newline="",
+        encoding="utf-8-sig",
+    ) as output_file:
+        writer = csv.DictWriter(
+            output_file,
+            fieldnames=mode19_results[0].keys(),
+        )
+        writer.writeheader()
+        writer.writerows(mode19_results)
+
+    mode19_summary = []
+    for scenario_data in mode19_scenarios:
+        orbit_plane_count = scenario_data["orbit_plane_count"]
+        for policy_name, _, _ in TOP_K_ORBIT_POLICIES:
+            matching_results = [
+                result
+                for result in mode19_results
+                if result["orbit_plane_count"] == orbit_plane_count
+                and result["policy"] == policy_name
+            ]
+            mode19_summary.append({
+                "orbit_plane_count": orbit_plane_count,
+                "policy": policy_name,
+                "mean_expected_ps": float(np.mean([
+                    result["expected_ps"] for result in matching_results
+                ])),
+                "average_group_count": float(np.mean([
+                    result["group_count"] for result in matching_results
+                ])),
+                "maximum_imbalance": float(np.max([
+                    result["imbalance"] for result in matching_results
+                ])),
+            })
+
+    with TOP_K_ORBIT_SUMMARY_CSV.open(
+        "w",
+        newline="",
+        encoding="utf-8-sig",
+    ) as output_file:
+        writer = csv.DictWriter(
+            output_file,
+            fieldnames=mode19_summary[0].keys(),
+        )
+        writer.writeheader()
+        writer.writerows(mode19_summary)
+
+    plane_styles = {
+        1: ("#4C78A8", "-"),
+        2: ("#F58518", "--"),
+        3: ("#54A24B", "-."),
+        4: ("#E45756", ":"),
+    }
+    figure, axis = plt.subplots(figsize=(10, 6), dpi=140)
+    plane_legend_handles = []
+
+    for scenario_data in mode19_scenarios:
+        orbit_plane_count = scenario_data["orbit_plane_count"]
+        color, line_style = plane_styles[orbit_plane_count]
+        plane_summary = [
+            next(
+                item
+                for item in mode19_summary
+                if item["orbit_plane_count"] == orbit_plane_count
+                and item["policy"] == policy_name
+            )
+            for policy_name, _, _ in TOP_K_ORBIT_POLICIES
+        ]
+        average_group_counts = np.array([
+            item["average_group_count"] for item in plane_summary
+        ])
+        mean_expected_ps = np.array([
+            item["mean_expected_ps"] for item in plane_summary
+        ])
+        axis.plot(
+            average_group_counts,
+            mean_expected_ps,
+            color=color,
+            linestyle=line_style,
+            linewidth=1.7,
+            zorder=2,
+        )
+        for point_index, (_, _, marker) in enumerate(TOP_K_ORBIT_POLICIES):
+            axis.scatter(
+                average_group_counts[point_index],
+                mean_expected_ps[point_index],
+                color=color,
+                marker=marker,
+                s=58,
+                edgecolors="black",
+                linewidths=0.5,
+                zorder=3,
+            )
+        plane_label = (
+            "1 orbital plane"
+            if orbit_plane_count == 1
+            else f"{orbit_plane_count} orbital planes"
+        )
+        plane_legend_handles.append(Line2D(
+            [0],
+            [0],
+            color=color,
+            linestyle=line_style,
+            linewidth=1.7,
+            label=plane_label,
+        ))
+
+    policy_legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            color="black",
+            marker=marker,
+            linestyle="None",
+            markersize=6.5,
+            label=policy_name,
+        )
+        for policy_name, _, marker in TOP_K_ORBIT_POLICIES
+    ]
+    plane_legend = axis.legend(
+        handles=plane_legend_handles,
+        title="Number of orbital planes",
+        loc="lower right",
+    )
+    axis.add_artist(plane_legend)
+    axis.legend(
+        handles=policy_legend_handles,
+        title="Grouping policy",
+        loc="upper left",
+    )
+    axis.set(
+        title=(
+            "Grouping Performance-Complexity Tradeoff under Different "
+            "Numbers of Orbital Planes"
+        ),
+        xlabel="Average number of groups",
+        ylabel="Preamble transmission success probability",
+    )
+    axis.grid(True, alpha=0.25)
+    axis.set_axisbelow(True)
+    figure.tight_layout()
+    figure.savefig(TOP_K_ORBIT_OUTPUT_PNG, bbox_inches="tight")
+    TOP_K_ORBIT_OUTPUT_PDF.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(TOP_K_ORBIT_OUTPUT_PDF, bbox_inches="tight")
+
+    print("\n--- Top-k Orbit-Plane Comparison Complete ---")
+    print(
+        f"{'Planes':>6} | {'Policy':>7} | {'Mean p_s':>10} | "
+        f"{'Avg groups':>10} | {'Max imbalance':>13}"
+    )
+    print("-" * 61)
+    for item in mode19_summary:
+        print(
+            f"{item['orbit_plane_count']:6d} | "
+            f"{item['policy']:>7} | "
+            f"{item['mean_expected_ps']:10.6f} | "
+            f"{item['average_group_count']:10.2f} | "
+            f"{item['maximum_imbalance']:13.6g}"
+        )
+
+    print("\nMarginal changes:")
+    for scenario_data in mode19_scenarios:
+        orbit_plane_count = scenario_data["orbit_plane_count"]
+        summary_by_policy = {
+            item["policy"]: item
+            for item in mode19_summary
+            if item["orbit_plane_count"] == orbit_plane_count
+        }
+        top1 = summary_by_policy["Top-1"]
+        top2 = summary_by_policy["Top-2"]
+        top3 = summary_by_policy["Top-3"]
+        print(
+            f"{orbit_plane_count}-plane: "
+            f"Top-1->Top-2 delta_p_s="
+            f"{top2['mean_expected_ps'] - top1['mean_expected_ps']:.6f}, "
+            f"delta_groups="
+            f"{top2['average_group_count'] - top1['average_group_count']:.2f}; "
+            f"Top-2->Top-3 delta_p_s="
+            f"{top3['mean_expected_ps'] - top2['mean_expected_ps']:.6f}, "
+            f"delta_groups="
+            f"{top3['average_group_count'] - top2['average_group_count']:.2f}"
+        )
+
+    print(f"Saved RAO results to {TOP_K_ORBIT_OUTPUT_CSV}")
+    print(f"Saved summary to {TOP_K_ORBIT_SUMMARY_CSV}")
+    print(f"Saved tradeoff figure to {TOP_K_ORBIT_OUTPUT_PDF}")
+    plt.show()
     raise SystemExit
 
 

@@ -11,9 +11,26 @@ from satellite_preselection import generate_uniform_locations
 from scenario_time import get_tle_scenario_metadata
 
 
-REFERENCE_TABLE = Path("group_ps_table.npz")
-OUTPUT_TABLE = Path("group_ps_table_top3.npz")
-FIXED_SATELLITE_POOL = "fixed_satellite_pool.json"
+TOP3_SCENARIOS = (
+    (
+        1,
+        Path("group_ps_table_planes_1.npz"),
+        "fixed_satellite_pool_planes_1.json",
+        Path("group_ps_table_planes_1_top3.npz"),
+    ),
+    (
+        2,
+        Path("group_ps_table_planes_2.npz"),
+        "fixed_satellite_pool_planes_2.json",
+        Path("group_ps_table_planes_2_top3.npz"),
+    ),
+    (
+        4,
+        Path("group_ps_table_planes_4.npz"),
+        "fixed_satellite_pool_planes_4.json",
+        Path("group_ps_table_planes_4_top3.npz"),
+    ),
+)
 
 RANDOM_SEED = 42
 CENTER = (25.03, 121.56)
@@ -56,16 +73,23 @@ def compute_top3_group_ps_table(
     seconds,
     trao_ms,
     sample_locations,
-    filename=OUTPUT_TABLE,
+    filename,
+    reference_filename,
+    orbit_plane_count,
     scenario_metadata=None,
     generate_full_table=GENERATE_FULL_TABLE,
     sampled_rao_step=SAMPLED_RAO_STEP,
 ):
     """Generate ordered Top-3 group weights and per-satellite channel success rates."""
     output_path = Path(filename)
-    if output_path.resolve() == REFERENCE_TABLE.resolve():
+    reference_path = Path(reference_filename)
+    if output_path.resolve() == reference_path.resolve():
         raise ValueError(
-            "Refusing to overwrite group_ps_table.npz; use a separate Top-3 filename."
+            f"Refusing to overwrite reference table {reference_path}."
+        )
+    if output_path.exists():
+        raise FileExistsError(
+            f"Top-3 output already exists; refusing to overwrite: {output_path}"
         )
     if len(real_sats) < GROUP_SIZE:
         raise ValueError(f"Top-{GROUP_SIZE} grouping requires at least {GROUP_SIZE} satellites.")
@@ -154,33 +178,84 @@ def compute_top3_group_ps_table(
         center_lat=CENTER[0],
         center_lon=CENTER[1],
         radius_km=RADIUS_KM,
+        orbit_plane_count=orbit_plane_count,
+        source_reference_table=reference_path.name,
     )
     print(f"Saved Top-3 group p_s table to {output_path}")
 
 
-def main():
-    if not REFERENCE_TABLE.exists():
+def generate_top3_scenario(
+    orbit_plane_count,
+    reference_table,
+    fixed_satellite_pool,
+    output_table,
+):
+    reference_table = Path(reference_table)
+    output_table = Path(output_table)
+    fixed_satellite_pool = Path(fixed_satellite_pool)
+
+    if not reference_table.exists():
         raise FileNotFoundError(
-            "group_ps_table.npz is required as the reference configuration."
+            f"Reference table not found: {reference_table}"
+        )
+    if not fixed_satellite_pool.exists():
+        raise FileNotFoundError(
+            f"Fixed satellite pool not found: {fixed_satellite_pool}"
+        )
+    if output_table.exists():
+        raise FileExistsError(
+            f"Top-3 output already exists; refusing to overwrite: {output_table}"
         )
 
-    reference = np.load(REFERENCE_TABLE, allow_pickle=True)
-    seconds = int(reference["seconds"])
-    trao_ms = int(reference["trao_ms"])
-    num_points = int(reference["num_points"])
-    expected_sat_ids = np.asarray(reference["sat_norad_ids"], dtype=int)
+    with np.load(reference_table, allow_pickle=True) as reference:
+        required_keys = (
+            "seconds",
+            "trao_ms",
+            "num_points",
+            "sat_norad_ids",
+            "scenario_start_dt_iso",
+            "tle_file_sha256",
+        )
+        missing_keys = [
+            key for key in required_keys if key not in reference.files
+        ]
+        if missing_keys:
+            raise ValueError(
+                f"{reference_table} is missing required metadata: "
+                f"{missing_keys}"
+            )
+        seconds = int(reference["seconds"])
+        trao_ms = int(reference["trao_ms"])
+        num_points = int(reference["num_points"])
+        expected_sat_ids = np.asarray(
+            reference["sat_norad_ids"],
+            dtype=int,
+        )
+        reference_start_dt_iso = str(reference["scenario_start_dt_iso"])
+        reference_tle_hash = str(reference["tle_file_sha256"])
+        if "radius_km" in reference.files:
+            reference_radius_km = float(reference["radius_km"])
+            if not np.isclose(reference_radius_km, RADIUS_KM):
+                raise ValueError(
+                    f"{reference_table} radius is {reference_radius_km:g} km; "
+                    f"expected {RADIUS_KM:g} km."
+                )
 
     scenario_metadata = get_tle_scenario_metadata()
-    if str(reference["scenario_start_dt_iso"]) != scenario_metadata["start_dt_iso"]:
-        raise ValueError("Reference table and current scenario start time do not match.")
-    if str(reference["tle_file_sha256"]) != scenario_metadata["tle_file_sha256"]:
-        raise ValueError("Reference table and current TLE file do not match.")
+    if reference_start_dt_iso != scenario_metadata["start_dt_iso"]:
+        raise ValueError(
+            f"{reference_table} and current scenario start time do not match."
+        )
+    if reference_tle_hash != scenario_metadata["tle_file_sha256"]:
+        raise ValueError(
+            f"{reference_table} and current TLE file do not match."
+        )
 
-    real_sats = load_fixed_satellites(FIXED_SATELLITE_POOL)
+    real_sats = load_fixed_satellites(str(fixed_satellite_pool))
     actual_sat_ids = np.array([int(sat.model.satnum) for sat in real_sats])
     if not np.array_equal(actual_sat_ids, expected_sat_ids):
         raise ValueError(
-            "fixed_satellite_pool.json does not match the reference group_ps_table.npz."
+            f"{fixed_satellite_pool} does not match {reference_table}."
         )
 
     np.random.seed(RANDOM_SEED)
@@ -196,7 +271,9 @@ def main():
         seconds=seconds,
         trao_ms=trao_ms,
         sample_locations=sample_locations,
-        filename=OUTPUT_TABLE,
+        filename=output_table,
+        reference_filename=reference_table,
+        orbit_plane_count=orbit_plane_count,
         scenario_metadata=scenario_metadata,
         generate_full_table=GENERATE_FULL_TABLE,
         sampled_rao_step=SAMPLED_RAO_STEP,
@@ -204,4 +281,33 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    missing_inputs = [
+        str(path)
+        for _, reference_table, fixed_satellite_pool, _ in TOP3_SCENARIOS
+        for path in (reference_table, Path(fixed_satellite_pool))
+        if not path.exists()
+    ]
+    if missing_inputs:
+        raise FileNotFoundError(
+            "Cannot generate the Top-3 tables; missing Mode 17 inputs: "
+            + ", ".join(missing_inputs)
+        )
+
+    existing_outputs = [
+        str(output_table)
+        for _, _, _, output_table in TOP3_SCENARIOS
+        if output_table.exists()
+    ]
+    if existing_outputs:
+        raise FileExistsError(
+            "Refusing to overwrite existing Top-3 outputs: "
+            + ", ".join(existing_outputs)
+        )
+
+    for scenario in TOP3_SCENARIOS:
+        orbit_plane_count = scenario[0]
+        print(
+            f"\n=== Generating Top-3 preselection data for "
+            f"{orbit_plane_count} orbital plane(s) ==="
+        )
+        generate_top3_scenario(*scenario)
