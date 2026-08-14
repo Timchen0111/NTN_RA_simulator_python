@@ -149,10 +149,10 @@ import main
 #    Aggregate all UE satellite selections in six non-overlapping 300-RAO
 #    windows and plot the five largest satellite-selection shares per window.
 #
-# 21 RUN_THREE_PLANE_POOL_SET_COMPARISON
-#    Run the same simulation for the original three-plane pool and each of the
-#    three non-overlapping pool sets. Compare Proposed with SAACB + ALLA using
-#    a grouped PLR bar chart and print the complete metric summary.
+# 21 RUN_SATELLITE_POOL_REALIZATION_COMPARISON
+#    Run the same simulation for the baseline and three alternative satellite
+#    pools. Compare DCLARA with ALLA with SAACB using a grouped PLR bar chart
+#    and print the complete metric summary.
 #
 # =============================================================================
 EXPERIMENT_CODE = 21
@@ -185,7 +185,7 @@ EXPERIMENT_SWITCHES = {
     18: "Top-k grouping policy analysis",
     19: "Top-k grouping comparison across orbit plane counts",
     20: "Top-5 satellite selection shares over time",
-    21: "Original and non-overlapping three-plane pool comparison",
+    21: "Satellite-pool realization comparison",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -210,7 +210,7 @@ RUN_ORBIT_PLANE_COMPARISON = EXPERIMENT_CODE == 17
 RUN_TOP_K_GROUPING_ANALYSIS = EXPERIMENT_CODE == 18
 RUN_TOP_K_ORBIT_PLANE_COMPARISON = EXPERIMENT_CODE == 19
 RUN_SATELLITE_SELECTION_TOP5_OVER_TIME = EXPERIMENT_CODE == 20
-RUN_THREE_PLANE_POOL_SET_COMPARISON = EXPERIMENT_CODE == 21
+RUN_SATELLITE_POOL_REALIZATION_COMPARISON = EXPERIMENT_CODE == 21
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -3373,7 +3373,7 @@ if RUN_SATELLITE_SELECTION_TOP5_OVER_TIME:
     raise SystemExit
 
 
-if RUN_THREE_PLANE_POOL_SET_COMPARISON:
+if RUN_SATELLITE_POOL_REALIZATION_COMPARISON:
     import json
     from pathlib import Path
 
@@ -3384,32 +3384,32 @@ if RUN_THREE_PLANE_POOL_SET_COMPARISON:
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
     MODES = (
-        ([6, 1], "Proposed"),
-        ([5, 3], "SAACB + ALLA"),
+        ([6, 1], "DCLARA"),
+        ([5, 3], "ALLA with SAACB"),
     )
     SERVICE_RADIUS_KM = 200.0
     POOL_SET_SCENARIOS = (
         (
             "original pool (baseline)",
-            "Original",
+            "Baseline",
             Path("fixed_satellite_pool.json"),
             Path("group_ps_table.npz"),
         ),
         (
-            "set_1 (plane ranks 1,4,7)",
-            "Set 1\n(1,4,7)",
+            "alternative pool A",
+            "Alternative A",
             Path("fixed_satellite_pool_planes_3_set_1.json"),
             Path("group_ps_table_planes_3_set_1.npz"),
         ),
         (
-            "set_2 (plane ranks 2,5,8)",
-            "Set 2\n(2,5,8)",
+            "alternative pool B",
+            "Alternative B",
             Path("fixed_satellite_pool_planes_3_set_2.json"),
             Path("group_ps_table_planes_3_set_2.npz"),
         ),
         (
-            "set_3 (plane ranks 3,6,9)",
-            "Set 3\n(3,6,9)",
+            "alternative pool C",
+            "Alternative C",
             Path("fixed_satellite_pool_planes_3_set_3.json"),
             Path("group_ps_table_planes_3_set_3.npz"),
         ),
@@ -3452,7 +3452,7 @@ if RUN_THREE_PLANE_POOL_SET_COMPARISON:
             "table_rao_ms": table_rao_ms,
         })
 
-    print("\n=== Mode 21: Four Three-plane Pool Scenarios ===")
+    print("\n=== Mode 21: Satellite-Pool Realization Comparison ===")
     print(f"Simulation time: {SECONDS} seconds")
     print(f"UE count: {NUM_UE}")
     print(f"Arrival rate: {RHO:g} packets/s")
@@ -3579,8 +3579,8 @@ if RUN_THREE_PLANE_POOL_SET_COMPARISON:
         )
 
     axis.set(
-        title="PLR Comparison across Four Three-plane Satellite Pools",
-        xlabel="Satellite pool",
+        title="PLR Comparison across Satellite-Pool Realizations",
+        xlabel="Satellite-pool realization",
         ylabel="Packet Loss Rate (%)",
         xticks=pool_axis,
         xticklabels=[
