@@ -150,8 +150,9 @@ import main
 #    windows and plot the five largest satellite-selection shares per window.
 #
 # 21 RUN_THREE_PLANE_POOL_SET_COMPARISON
-#    Run the same simulation once for each non-overlapping three-plane pool
-#    set and print a metric summary without generating figures or CSV files.
+#    Run the same simulation for the original three-plane pool and each of the
+#    three non-overlapping pool sets. Compare Proposed with SAACB + ALLA using
+#    a grouped PLR bar chart and print the complete metric summary.
 #
 # =============================================================================
 EXPERIMENT_CODE = 21
@@ -184,7 +185,7 @@ EXPERIMENT_SWITCHES = {
     18: "Top-k grouping policy analysis",
     19: "Top-k grouping comparison across orbit plane counts",
     20: "Top-5 satellite selection shares over time",
-    21: "Non-overlapping three-plane satellite pool comparison",
+    21: "Original and non-overlapping three-plane pool comparison",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -3382,21 +3383,33 @@ if RUN_THREE_PLANE_POOL_SET_COMPARISON:
     RHO = 1.5
     IMBALANCE_EPSILON = 0.001
     USE_REAL_PS = False
-    MODE = [6, 1]
+    MODES = (
+        ([6, 1], "Proposed"),
+        ([5, 3], "SAACB + ALLA"),
+    )
     SERVICE_RADIUS_KM = 200.0
     POOL_SET_SCENARIOS = (
         (
+            "original pool (baseline)",
+            "Original",
+            Path("fixed_satellite_pool.json"),
+            Path("group_ps_table.npz"),
+        ),
+        (
             "set_1 (plane ranks 1,4,7)",
+            "Set 1\n(1,4,7)",
             Path("fixed_satellite_pool_planes_3_set_1.json"),
             Path("group_ps_table_planes_3_set_1.npz"),
         ),
         (
             "set_2 (plane ranks 2,5,8)",
+            "Set 2\n(2,5,8)",
             Path("fixed_satellite_pool_planes_3_set_2.json"),
             Path("group_ps_table_planes_3_set_2.npz"),
         ),
         (
             "set_3 (plane ranks 3,6,9)",
+            "Set 3\n(3,6,9)",
             Path("fixed_satellite_pool_planes_3_set_3.json"),
             Path("group_ps_table_planes_3_set_3.npz"),
         ),
@@ -3404,20 +3417,21 @@ if RUN_THREE_PLANE_POOL_SET_COMPARISON:
 
     missing_inputs = [
         str(path)
-        for _, pool_path, table_path in POOL_SET_SCENARIOS
+        for _, _, pool_path, table_path in POOL_SET_SCENARIOS
         for path in (pool_path, table_path)
         if not path.exists()
     ]
     if missing_inputs:
         raise FileNotFoundError(
-            "Mode 21 requires all three satellite pools and group tables. "
+            "Mode 21 requires the original pool plus all three new satellite "
+            "pools and their group tables. "
             "Generate them with generate_nonoverlapping_three_plane_pools.py. "
             "Missing: "
             + ", ".join(missing_inputs)
         )
 
     scenario_metadata = []
-    for label, pool_path, table_path in POOL_SET_SCENARIOS:
+    for label, chart_label, pool_path, table_path in POOL_SET_SCENARIOS:
         with pool_path.open("r", encoding="utf-8") as pool_file:
             satellite_count = len(json.load(pool_file))
         with np.load(table_path, allow_pickle=True) as table_data:
@@ -3430,6 +3444,7 @@ if RUN_THREE_PLANE_POOL_SET_COMPARISON:
             )
         scenario_metadata.append({
             "label": label,
+            "chart_label": chart_label,
             "pool_path": pool_path,
             "table_path": table_path,
             "satellite_count": satellite_count,
@@ -3437,67 +3452,73 @@ if RUN_THREE_PLANE_POOL_SET_COMPARISON:
             "table_rao_ms": table_rao_ms,
         })
 
-    print("\n=== Mode 21: Non-overlapping Three-plane Pool Comparison ===")
+    print("\n=== Mode 21: Four Three-plane Pool Scenarios ===")
     print(f"Simulation time: {SECONDS} seconds")
     print(f"UE count: {NUM_UE}")
     print(f"Arrival rate: {RHO:g} packets/s")
-    print(f"Simulation mode: {MODE}")
+    print(
+        "Methods: "
+        + ", ".join(f"{label}={mode}" for mode, label in MODES)
+    )
     print(f"Random seed: {SEED}")
 
     pool_set_results = []
     for scenario in scenario_metadata:
-        print(
-            f"\nRunning {scenario['label']}: "
-            f"satellites={scenario['satellite_count']}, "
-            f"pool={scenario['pool_path']}, "
-            f"table={scenario['table_path']}"
-        )
-        (
-            average_throughput,
-            packet_loss_rate,
-            n_history,
-            _,
-            _,
-            _,
-            run_history,
-        ) = main.main(
-            RHO,
-            SECONDS,
-            NUM_UE,
-            MODE,
-            SEED,
-            IMBALANCE_EPSILON,
-            USE_REAL_PS=USE_REAL_PS,
-            SERVICE_RADIUS_KM=SERVICE_RADIUS_KM,
-            GROUP_TABLE_FILENAME=str(scenario["table_path"]),
-            SATELLITE_POOL_FILENAME=str(scenario["pool_path"]),
-        )
-        final_n_estimate = (
-            float(n_history[-1]) if len(n_history) > 0 else np.nan
-        )
-        pool_set_results.append({
-            "label": scenario["label"],
-            "satellite_count": scenario["satellite_count"],
-            "throughput": float(average_throughput),
-            "plr": float(packet_loss_rate),
-            "average_delay_ms": float(
-                run_history.get("average_delay_ms", np.nan)
-            ),
-            "deadline_budget_utilization": float(
-                run_history.get(
-                    "average_deadline_budget_utilization",
-                    np.nan,
-                )
-            ),
-            "final_n_estimate": final_n_estimate,
-        })
+        for mode, method_label in MODES:
+            print(
+                f"\nRunning {scenario['label']}, method={method_label}: "
+                f"satellites={scenario['satellite_count']}, "
+                f"pool={scenario['pool_path']}, "
+                f"table={scenario['table_path']}"
+            )
+            (
+                average_throughput,
+                packet_loss_rate,
+                n_history,
+                _,
+                _,
+                _,
+                run_history,
+            ) = main.main(
+                RHO,
+                SECONDS,
+                NUM_UE,
+                mode,
+                SEED,
+                IMBALANCE_EPSILON,
+                USE_REAL_PS=USE_REAL_PS,
+                SERVICE_RADIUS_KM=SERVICE_RADIUS_KM,
+                GROUP_TABLE_FILENAME=str(scenario["table_path"]),
+                SATELLITE_POOL_FILENAME=str(scenario["pool_path"]),
+            )
+            final_n_estimate = (
+                float(n_history[-1]) if len(n_history) > 0 else np.nan
+            )
+            pool_set_results.append({
+                "label": scenario["label"],
+                "chart_label": scenario["chart_label"],
+                "method": method_label,
+                "satellite_count": scenario["satellite_count"],
+                "throughput": float(average_throughput),
+                "plr": float(packet_loss_rate),
+                "average_delay_ms": float(
+                    run_history.get("average_delay_ms", np.nan)
+                ),
+                "deadline_budget_utilization": float(
+                    run_history.get(
+                        "average_deadline_budget_utilization",
+                        np.nan,
+                    )
+                ),
+                "final_n_estimate": final_n_estimate,
+            })
 
     print("\n--- Mode 21 Results ---")
     print(
-        f"{'Pool set':<29} | {'Sats':>4} | {'Throughput':>10} | "
+        f"{'Pool set':<29} | {'Method':<12} | {'Sats':>4} | {'Throughput':>10} | "
         f"{'PLR':>8} | {'Delay ms':>9} | {'DB util.':>8} | {'Final N':>10}"
     )
-    print("-" * 103)
+    print("-" * 118)
     for result in pool_set_results:
         deadline_utilization = result["deadline_budget_utilization"]
         deadline_text = (
@@ -3517,6 +3538,7 @@ if RUN_THREE_PLANE_POOL_SET_COMPARISON:
         )
         print(
             f"{result['label']:<29} | "
+            f"{result['method']:<12} | "
             f"{result['satellite_count']:4d} | "
             f"{result['throughput']:10.2f} | "
             f"{result['plr']:8.4f} | "
@@ -3524,6 +3546,53 @@ if RUN_THREE_PLANE_POOL_SET_COMPARISON:
             f"{deadline_text:>8} | "
             f"{final_n_text:>10}"
         )
+
+    pool_axis = np.arange(len(scenario_metadata), dtype=float)
+    bar_width = 0.36
+    figure, axis = plt.subplots(figsize=(11, 6.5), dpi=140)
+    method_colors = ("#4C78A8", "#F58518")
+    for method_index, ((_, method_label), color) in enumerate(
+        zip(MODES, method_colors)
+    ):
+        plr_percent = np.array([
+            next(
+                result["plr"]
+                for result in pool_set_results
+                if result["label"] == scenario["label"]
+                and result["method"] == method_label
+            ) * 100.0
+            for scenario in scenario_metadata
+        ])
+        positions = pool_axis + (method_index - 0.5) * bar_width
+        bars = axis.bar(
+            positions,
+            plr_percent,
+            width=bar_width,
+            color=color,
+            label=method_label,
+        )
+        axis.bar_label(
+            bars,
+            labels=[f"{value:.2f}%" for value in plr_percent],
+            padding=3,
+            fontsize=9,
+        )
+
+    axis.set(
+        title="PLR Comparison across Four Three-plane Satellite Pools",
+        xlabel="Satellite pool",
+        ylabel="Packet Loss Rate (%)",
+        xticks=pool_axis,
+        xticklabels=[
+            scenario["chart_label"]
+            for scenario in scenario_metadata
+        ],
+    )
+    axis.grid(axis="y", alpha=0.25)
+    axis.set_axisbelow(True)
+    axis.legend()
+    figure.tight_layout()
+    plt.show()
     raise SystemExit
 
 
