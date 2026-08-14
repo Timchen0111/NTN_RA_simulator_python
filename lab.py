@@ -3326,7 +3326,7 @@ if RUN_SATELLITE_SELECTION_TOP5_OVER_TIME:
                 ha="center",
                 va="bottom",
                 fontsize=8,
-                rotation=90,
+                rotation=0,
             )
 
     time_labels = [
