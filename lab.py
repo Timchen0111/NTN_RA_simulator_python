@@ -145,8 +145,12 @@ import main
 #    Compare the grouping performance-complexity tradeoff under independently
 #    generated 1-, 2-, 3-, and 4-orbit-plane scenarios.
 #
+# 20 RUN_SATELLITE_SELECTION_TOP5_OVER_TIME
+#    Aggregate all UE satellite selections in six non-overlapping 300-RAO
+#    windows and plot the five largest satellite-selection shares per window.
+#
 # =============================================================================
-EXPERIMENT_CODE = 2
+EXPERIMENT_CODE = 20
 SIM_SECONDS = 10
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
@@ -175,6 +179,7 @@ EXPERIMENT_SWITCHES = {
     17: "Orbit plane count comparison",
     18: "Top-k grouping policy analysis",
     19: "Top-k grouping comparison across orbit plane counts",
+    20: "Top-5 satellite selection shares over time",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -198,6 +203,7 @@ RUN_BACKOFF_INITIAL_GUESS_SENSITIVITY = EXPERIMENT_CODE == 16
 RUN_ORBIT_PLANE_COMPARISON = EXPERIMENT_CODE == 17
 RUN_TOP_K_GROUPING_ANALYSIS = EXPERIMENT_CODE == 18
 RUN_TOP_K_ORBIT_PLANE_COMPARISON = EXPERIMENT_CODE == 19
+RUN_SATELLITE_SELECTION_TOP5_OVER_TIME = EXPERIMENT_CODE == 20
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -3174,6 +3180,189 @@ if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
     print(f"Saved tradeoff figure to {TOP_K_ORBIT_OUTPUT_PDF}")
     print(f"Saved two-panel comparison figure to {TOP_K_ORBIT_PANEL_PDF}")
     plt.show()
+    raise SystemExit
+
+
+if RUN_SATELLITE_SELECTION_TOP5_OVER_TIME:
+    NUM_UE = 10000
+    SECONDS = 180
+    SEED = 42
+    RHO = 1.5
+    IMBALANCE_EPSILON = 0.001
+    USE_REAL_PS = False
+    MODE = [6, 3]
+    WINDOW_RAOS = 300
+    WINDOW_COUNT = 6
+    TOP_SATELLITE_COUNT = 5
+    EXPECTED_RAOS = WINDOW_RAOS * WINDOW_COUNT
+
+    print(
+        "\nRunning Mode 20 satellite-selection analysis: "
+        f"{SECONDS} seconds, {EXPECTED_RAOS} RAOs, "
+        f"{WINDOW_COUNT} windows of {WINDOW_RAOS} RAOs"
+    )
+    _, _, _, _, _, _, run_history = main.main(
+        RHO,
+        SECONDS,
+        NUM_UE,
+        MODE,
+        SEED,
+        IMBALANCE_EPSILON,
+        USE_REAL_PS=USE_REAL_PS,
+    )
+    selection_history = run_history.get(
+        "ue_satellite_selection_history",
+        [],
+    )
+    if len(selection_history) != EXPECTED_RAOS:
+        raise ValueError(
+            "Mode 20 requires exactly "
+            f"{EXPECTED_RAOS} satellite-selection records; received "
+            f"{len(selection_history)}."
+        )
+
+    rao_indices = np.array(
+        [item["time_slot"] for item in selection_history],
+        dtype=int,
+    )
+    if not np.array_equal(rao_indices, np.arange(EXPECTED_RAOS)):
+        raise ValueError(
+            "Mode 20 requires consecutive RAO indices from 0 to "
+            f"{EXPECTED_RAOS - 1}."
+        )
+
+    selection_counts_by_rao = np.vstack([
+        np.asarray(item["selection_counts"], dtype=np.int64)
+        for item in selection_history
+    ])
+    if selection_counts_by_rao.ndim != 2:
+        raise ValueError("Mode 20 selection counts must form a 2-D array.")
+    if selection_counts_by_rao.shape[1] < TOP_SATELLITE_COUNT:
+        raise ValueError(
+            "Mode 20 requires at least five satellites in the scenario."
+        )
+
+    top_satellite_ids = np.empty(
+        (WINDOW_COUNT, TOP_SATELLITE_COUNT),
+        dtype=int,
+    )
+    top_satellite_shares = np.empty(
+        (WINDOW_COUNT, TOP_SATELLITE_COUNT),
+        dtype=float,
+    )
+    top_satellite_counts = np.empty(
+        (WINDOW_COUNT, TOP_SATELLITE_COUNT),
+        dtype=np.int64,
+    )
+    total_selections_by_window = np.empty(WINDOW_COUNT, dtype=np.int64)
+
+    for window_index in range(WINDOW_COUNT):
+        start_rao = window_index * WINDOW_RAOS
+        stop_rao = start_rao + WINDOW_RAOS
+        window_counts = np.sum(
+            selection_counts_by_rao[start_rao:stop_rao],
+            axis=0,
+        )
+        total_selections = int(np.sum(window_counts))
+        if total_selections <= 0:
+            raise ValueError(
+                f"Mode 20 window {window_index + 1} has no UE satellite "
+                "selections."
+            )
+        ranked_satellite_ids = np.argsort(
+            -window_counts,
+            kind="stable",
+        )[:TOP_SATELLITE_COUNT]
+        top_satellite_ids[window_index] = ranked_satellite_ids
+        top_satellite_counts[window_index] = window_counts[
+            ranked_satellite_ids
+        ]
+        top_satellite_shares[window_index] = (
+            window_counts[ranked_satellite_ids] / total_selections
+        )
+        total_selections_by_window[window_index] = total_selections
+
+    window_positions = np.arange(WINDOW_COUNT, dtype=float)
+    bar_width = 0.15
+    unique_top_satellite_ids = np.unique(top_satellite_ids)
+    satellite_palette = plt.get_cmap(
+        "tab20",
+        len(unique_top_satellite_ids),
+    )
+    satellite_colors = {
+        int(satellite_id): satellite_palette(color_index)
+        for color_index, satellite_id in enumerate(unique_top_satellite_ids)
+    }
+    figure, axis = plt.subplots(figsize=(12, 6.5), dpi=140)
+    maximum_share_percent = float(np.max(top_satellite_shares) * 100)
+
+    for rank_index in range(TOP_SATELLITE_COUNT):
+        bar_positions = (
+            window_positions
+            + (rank_index - (TOP_SATELLITE_COUNT - 1) / 2) * bar_width
+        )
+        share_percent = top_satellite_shares[:, rank_index] * 100
+        bars = axis.bar(
+            bar_positions,
+            share_percent,
+            width=bar_width,
+            color=[
+                satellite_colors[int(satellite_id)]
+                for satellite_id in top_satellite_ids[:, rank_index]
+            ],
+            edgecolor="white",
+            linewidth=0.5,
+        )
+        for window_index, bar in enumerate(bars):
+            satellite_id = top_satellite_ids[
+                window_index,
+                rank_index,
+            ] + 1
+            axis.annotate(
+                f"S{satellite_id}",
+                xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                rotation=90,
+            )
+
+    time_labels = [
+        f"{window_index * WINDOW_RAOS / 10:.0f}–"
+        f"{(window_index + 1) * WINDOW_RAOS / 10:.0f} s"
+        for window_index in range(WINDOW_COUNT)
+    ]
+    axis.set(
+        title="Top-5 Satellite Selection Shares over Time",
+        xlabel=(
+            "Simulation time interval "
+            f"({WINDOW_RAOS} RAOs per interval)"
+        ),
+        ylabel="UE satellite-selection share (%)",
+        xticks=window_positions,
+        xticklabels=time_labels,
+    )
+    axis.set_ylim(0, max(10.0, maximum_share_percent * 1.24))
+    axis.grid(axis="y", alpha=0.25)
+    axis.set_axisbelow(True)
+    figure.tight_layout()
+    plt.show()
+
+    print("\n--- Mode 20 Satellite Selection Top-5 Summary ---")
+    for window_index in range(WINDOW_COUNT):
+        top5_text = ", ".join(
+            f"S{top_satellite_ids[window_index, rank_index] + 1}: "
+            f"{top_satellite_shares[window_index, rank_index]:.2%}"
+            for rank_index in range(TOP_SATELLITE_COUNT)
+        )
+        print(
+            f"Window {window_index + 1} "
+            f"({window_index * WINDOW_RAOS / 10:g}-"
+            f"{(window_index + 1) * WINDOW_RAOS / 10:g} s): "
+            f"{top5_text}"
+        )
     raise SystemExit
 
 
