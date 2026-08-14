@@ -3037,12 +3037,6 @@ if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
         policy_name
         for policy_name, _, _ in TOP_K_ORBIT_POLICIES
     ]
-    plane_markers = {
-        1: "o",
-        2: "s",
-        3: "^",
-        4: "D",
-    }
     panel_figure, (success_axis, group_axis) = plt.subplots(
         2,
         1,
@@ -3054,8 +3048,7 @@ if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
 
     for scenario_data in mode19_scenarios:
         orbit_plane_count = scenario_data["orbit_plane_count"]
-        color, line_style = plane_styles[orbit_plane_count]
-        marker = plane_markers[orbit_plane_count]
+        color, _ = plane_styles[orbit_plane_count]
         plane_summary = [
             next(
                 item
@@ -3081,30 +3074,30 @@ if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
             policy_axis,
             mean_expected_ps,
             color=color,
-            linestyle=line_style,
-            marker=marker,
+            linestyle="-",
+            marker="o",
             markersize=6,
-            linewidth=1.7,
+            linewidth=1.6,
             label=plane_label,
         )
         group_axis.plot(
             policy_axis,
             average_group_counts,
             color=color,
-            linestyle=line_style,
-            marker=marker,
+            linestyle="-",
+            marker="o",
             markersize=6,
-            linewidth=1.7,
+            linewidth=1.6,
             label=plane_label,
         )
         panel_legend_handles.append(Line2D(
             [0],
             [0],
             color=color,
-            linestyle=line_style,
-            marker=marker,
+            linestyle="-",
+            marker="o",
             markersize=6,
-            linewidth=1.7,
+            linewidth=1.6,
             label=plane_label,
         ))
 
