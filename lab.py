@@ -149,8 +149,12 @@ import main
 #    Aggregate all UE satellite selections in six non-overlapping 300-RAO
 #    windows and plot the five largest satellite-selection shares per window.
 #
+# 21 RUN_THREE_PLANE_POOL_SET_COMPARISON
+#    Run the same simulation once for each non-overlapping three-plane pool
+#    set and print a metric summary without generating figures or CSV files.
+#
 # =============================================================================
-EXPERIMENT_CODE = 20
+EXPERIMENT_CODE = 21
 SIM_SECONDS = 10
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
@@ -180,6 +184,7 @@ EXPERIMENT_SWITCHES = {
     18: "Top-k grouping policy analysis",
     19: "Top-k grouping comparison across orbit plane counts",
     20: "Top-5 satellite selection shares over time",
+    21: "Non-overlapping three-plane satellite pool comparison",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -204,6 +209,7 @@ RUN_ORBIT_PLANE_COMPARISON = EXPERIMENT_CODE == 17
 RUN_TOP_K_GROUPING_ANALYSIS = EXPERIMENT_CODE == 18
 RUN_TOP_K_ORBIT_PLANE_COMPARISON = EXPERIMENT_CODE == 19
 RUN_SATELLITE_SELECTION_TOP5_OVER_TIME = EXPERIMENT_CODE == 20
+RUN_THREE_PLANE_POOL_SET_COMPARISON = EXPERIMENT_CODE == 21
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -3362,6 +3368,161 @@ if RUN_SATELLITE_SELECTION_TOP5_OVER_TIME:
             f"({window_index * WINDOW_RAOS / 10:g}-"
             f"{(window_index + 1) * WINDOW_RAOS / 10:g} s): "
             f"{top5_text}"
+        )
+    raise SystemExit
+
+
+if RUN_THREE_PLANE_POOL_SET_COMPARISON:
+    import json
+    from pathlib import Path
+
+    NUM_UE = 10000
+    SECONDS = SIM_SECONDS
+    SEED = 42
+    RHO = 1.5
+    IMBALANCE_EPSILON = 0.001
+    USE_REAL_PS = False
+    MODE = [6, 1]
+    SERVICE_RADIUS_KM = 200.0
+    POOL_SET_SCENARIOS = (
+        (
+            "set_1 (plane ranks 1,4,7)",
+            Path("fixed_satellite_pool_planes_3_set_1.json"),
+            Path("group_ps_table_planes_3_set_1.npz"),
+        ),
+        (
+            "set_2 (plane ranks 2,5,8)",
+            Path("fixed_satellite_pool_planes_3_set_2.json"),
+            Path("group_ps_table_planes_3_set_2.npz"),
+        ),
+        (
+            "set_3 (plane ranks 3,6,9)",
+            Path("fixed_satellite_pool_planes_3_set_3.json"),
+            Path("group_ps_table_planes_3_set_3.npz"),
+        ),
+    )
+
+    missing_inputs = [
+        str(path)
+        for _, pool_path, table_path in POOL_SET_SCENARIOS
+        for path in (pool_path, table_path)
+        if not path.exists()
+    ]
+    if missing_inputs:
+        raise FileNotFoundError(
+            "Mode 21 requires all three satellite pools and group tables. "
+            "Generate them with generate_nonoverlapping_three_plane_pools.py. "
+            "Missing: "
+            + ", ".join(missing_inputs)
+        )
+
+    scenario_metadata = []
+    for label, pool_path, table_path in POOL_SET_SCENARIOS:
+        with pool_path.open("r", encoding="utf-8") as pool_file:
+            satellite_count = len(json.load(pool_file))
+        with np.load(table_path, allow_pickle=True) as table_data:
+            table_seconds = int(table_data["seconds"])
+            table_rao_ms = int(table_data["trao_ms"])
+        if SECONDS > table_seconds:
+            raise ValueError(
+                f"Mode 21 requests {SECONDS} seconds, but {table_path} only "
+                f"contains {table_seconds} seconds."
+            )
+        scenario_metadata.append({
+            "label": label,
+            "pool_path": pool_path,
+            "table_path": table_path,
+            "satellite_count": satellite_count,
+            "table_seconds": table_seconds,
+            "table_rao_ms": table_rao_ms,
+        })
+
+    print("\n=== Mode 21: Non-overlapping Three-plane Pool Comparison ===")
+    print(f"Simulation time: {SECONDS} seconds")
+    print(f"UE count: {NUM_UE}")
+    print(f"Arrival rate: {RHO:g} packets/s")
+    print(f"Simulation mode: {MODE}")
+    print(f"Random seed: {SEED}")
+
+    pool_set_results = []
+    for scenario in scenario_metadata:
+        print(
+            f"\nRunning {scenario['label']}: "
+            f"satellites={scenario['satellite_count']}, "
+            f"pool={scenario['pool_path']}, "
+            f"table={scenario['table_path']}"
+        )
+        (
+            average_throughput,
+            packet_loss_rate,
+            n_history,
+            _,
+            _,
+            _,
+            run_history,
+        ) = main.main(
+            RHO,
+            SECONDS,
+            NUM_UE,
+            MODE,
+            SEED,
+            IMBALANCE_EPSILON,
+            USE_REAL_PS=USE_REAL_PS,
+            SERVICE_RADIUS_KM=SERVICE_RADIUS_KM,
+            GROUP_TABLE_FILENAME=str(scenario["table_path"]),
+            SATELLITE_POOL_FILENAME=str(scenario["pool_path"]),
+        )
+        final_n_estimate = (
+            float(n_history[-1]) if len(n_history) > 0 else np.nan
+        )
+        pool_set_results.append({
+            "label": scenario["label"],
+            "satellite_count": scenario["satellite_count"],
+            "throughput": float(average_throughput),
+            "plr": float(packet_loss_rate),
+            "average_delay_ms": float(
+                run_history.get("average_delay_ms", np.nan)
+            ),
+            "deadline_budget_utilization": float(
+                run_history.get(
+                    "average_deadline_budget_utilization",
+                    np.nan,
+                )
+            ),
+            "final_n_estimate": final_n_estimate,
+        })
+
+    print("\n--- Mode 21 Results ---")
+    print(
+        f"{'Pool set':<29} | {'Sats':>4} | {'Throughput':>10} | "
+        f"{'PLR':>8} | {'Delay ms':>9} | {'DB util.':>8} | {'Final N':>10}"
+    )
+    print("-" * 103)
+    for result in pool_set_results:
+        deadline_utilization = result["deadline_budget_utilization"]
+        deadline_text = (
+            f"{deadline_utilization * 100:.2f}%"
+            if np.isfinite(deadline_utilization)
+            else "N/A"
+        )
+        delay_text = (
+            f"{result['average_delay_ms']:.2f}"
+            if np.isfinite(result["average_delay_ms"])
+            else "N/A"
+        )
+        final_n_text = (
+            f"{result['final_n_estimate']:.2f}"
+            if np.isfinite(result["final_n_estimate"])
+            else "N/A"
+        )
+        print(
+            f"{result['label']:<29} | "
+            f"{result['satellite_count']:4d} | "
+            f"{result['throughput']:10.2f} | "
+            f"{result['plr']:8.4f} | "
+            f"{delay_text:>9} | "
+            f"{deadline_text:>8} | "
+            f"{final_n_text:>10}"
         )
     raise SystemExit
 
