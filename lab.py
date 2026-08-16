@@ -154,8 +154,12 @@ import main
 #    pools. Compare DCLARA with ALLA with SAACB using a grouped PLR bar chart
 #    and print the complete metric summary.
 #
+# 22 RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON
+#    Keep the virtual-UE reference uniform and compare Uniform,
+#    Center-concentrated, and Two-hotspot actual UE distributions.
+#
 # =============================================================================
-EXPERIMENT_CODE = 21
+EXPERIMENT_CODE = 22
 SIM_SECONDS = 10
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
@@ -186,6 +190,7 @@ EXPERIMENT_SWITCHES = {
     19: "Top-k grouping comparison across orbit plane counts",
     20: "Top-5 satellite selection shares over time",
     21: "Satellite-pool realization comparison",
+    22: "Actual UE spatial-distribution comparison",
 }
 if EXPERIMENT_CODE not in EXPERIMENT_SWITCHES:
     raise ValueError(f"Unknown EXPERIMENT_CODE: {EXPERIMENT_CODE}")
@@ -211,6 +216,7 @@ RUN_TOP_K_GROUPING_ANALYSIS = EXPERIMENT_CODE == 18
 RUN_TOP_K_ORBIT_PLANE_COMPARISON = EXPERIMENT_CODE == 19
 RUN_SATELLITE_SELECTION_TOP5_OVER_TIME = EXPERIMENT_CODE == 20
 RUN_SATELLITE_POOL_REALIZATION_COMPARISON = EXPERIMENT_CODE == 21
+RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON = EXPERIMENT_CODE == 22
 
 if RUN_ALL:
     NUM_UE = 10000
@@ -3591,6 +3597,169 @@ if RUN_SATELLITE_POOL_REALIZATION_COMPARISON:
     axis.grid(axis="y", alpha=0.25)
     axis.set_axisbelow(True)
     axis.legend()
+    figure.tight_layout()
+    plt.show()
+    raise SystemExit
+
+
+if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
+    from pathlib import Path
+
+    NUM_UE = 10000
+    SECONDS = SIM_SECONDS
+    SEED = 42
+    RHO = 1.5
+    IMBALANCE_EPSILON = 0.001
+    USE_REAL_PS = False
+    MODE = [6, 1]
+    SERVICE_RADIUS_KM = 200.0
+    SATELLITE_POOL_FILENAME = Path("fixed_satellite_pool.json")
+    GROUP_TABLE_FILENAME = Path("group_ps_table.npz")
+    DISTRIBUTION_SCENARIOS = (
+        ("Uniform", "uniform"),
+        ("Center-concentrated", "center_concentrated"),
+        ("Two-hotspot", "two_hotspot"),
+    )
+
+    missing_inputs = [
+        str(path)
+        for path in (SATELLITE_POOL_FILENAME, GROUP_TABLE_FILENAME)
+        if not path.exists()
+    ]
+    if missing_inputs:
+        raise FileNotFoundError(
+            "Mode 22 requires the baseline satellite pool and uniform "
+            "virtual-UE group table. Missing: "
+            + ", ".join(missing_inputs)
+        )
+
+    with np.load(GROUP_TABLE_FILENAME, allow_pickle=True) as table_data:
+        table_seconds = int(table_data["seconds"])
+        virtual_ue_count = int(table_data["num_points"])
+    if SECONDS > table_seconds:
+        raise ValueError(
+            f"Mode 22 requests {SECONDS} seconds, but "
+            f"{GROUP_TABLE_FILENAME} only contains {table_seconds} seconds."
+        )
+
+    print("\n=== Mode 22: Actual UE Spatial-Distribution Comparison ===")
+    print(f"Simulation time: {SECONDS} seconds")
+    print(f"Actual UE count: {NUM_UE}")
+    print(f"Virtual UE reference: Uniform ({virtual_ue_count} points)")
+    print(f"Service radius: {SERVICE_RADIUS_KM:g} km")
+    print(f"Arrival rate: {RHO:g} packets/s")
+    print("Method: DCLARA")
+    print(f"Random seed: {SEED}")
+
+    distribution_results = []
+    for distribution_label, distribution_key in DISTRIBUTION_SCENARIOS:
+        print(
+            f"\nRunning Actual UE distribution: {distribution_label}; "
+            "Virtual UE distribution: Uniform"
+        )
+        (
+            average_throughput,
+            packet_loss_rate,
+            n_history,
+            _,
+            _,
+            _,
+            run_history,
+        ) = main.main(
+            RHO,
+            SECONDS,
+            NUM_UE,
+            MODE,
+            SEED,
+            IMBALANCE_EPSILON,
+            USE_REAL_PS=USE_REAL_PS,
+            SERVICE_RADIUS_KM=SERVICE_RADIUS_KM,
+            GROUP_TABLE_FILENAME=str(GROUP_TABLE_FILENAME),
+            SATELLITE_POOL_FILENAME=str(SATELLITE_POOL_FILENAME),
+            UE_SPATIAL_DISTRIBUTION=distribution_key,
+            UE_LOCATION_SEED=SEED,
+        )
+        final_n_estimate = (
+            float(n_history[-1]) if len(n_history) > 0 else np.nan
+        )
+        distribution_results.append({
+            "distribution": distribution_label,
+            "throughput": float(average_throughput),
+            "plr": float(packet_loss_rate),
+            "average_delay_ms": float(
+                run_history.get("average_delay_ms", np.nan)
+            ),
+            "deadline_budget_utilization": float(
+                run_history.get(
+                    "average_deadline_budget_utilization",
+                    np.nan,
+                )
+            ),
+            "final_n_estimate": final_n_estimate,
+        })
+
+    print("\n--- Mode 22 Results ---")
+    print(
+        f"{'Actual UE distribution':<24} | {'Throughput':>10} | "
+        f"{'PLR':>8} | {'Delay ms':>9} | {'DB util.':>8} | {'Final N':>10}"
+    )
+    print("-" * 91)
+    for result in distribution_results:
+        deadline_utilization = result["deadline_budget_utilization"]
+        deadline_text = (
+            f"{deadline_utilization * 100:.2f}%"
+            if np.isfinite(deadline_utilization)
+            else "N/A"
+        )
+        delay_text = (
+            f"{result['average_delay_ms']:.2f}"
+            if np.isfinite(result["average_delay_ms"])
+            else "N/A"
+        )
+        final_n_text = (
+            f"{result['final_n_estimate']:.2f}"
+            if np.isfinite(result["final_n_estimate"])
+            else "N/A"
+        )
+        print(
+            f"{result['distribution']:<24} | "
+            f"{result['throughput']:10.2f} | "
+            f"{result['plr']:8.4f} | "
+            f"{delay_text:>9} | "
+            f"{deadline_text:>8} | "
+            f"{final_n_text:>10}"
+        )
+
+    distribution_axis = np.arange(len(distribution_results), dtype=float)
+    plr_percent = np.array([
+        result["plr"] * 100.0
+        for result in distribution_results
+    ])
+    figure, axis = plt.subplots(figsize=(9.5, 6), dpi=140)
+    bars = axis.bar(
+        distribution_axis,
+        plr_percent,
+        width=0.58,
+        color="#4C78A8",
+    )
+    axis.bar_label(
+        bars,
+        labels=[f"{value:.2f}%" for value in plr_percent],
+        padding=3,
+        fontsize=9,
+    )
+    axis.set(
+        title="PLR under Different Actual UE Spatial Distributions",
+        xlabel="Actual UE spatial distribution",
+        ylabel="Packet Loss Rate (%)",
+        xticks=distribution_axis,
+        xticklabels=[
+            result["distribution"]
+            for result in distribution_results
+        ],
+    )
+    axis.grid(axis="y", alpha=0.25)
+    axis.set_axisbelow(True)
     figure.tight_layout()
     plt.show()
     raise SystemExit

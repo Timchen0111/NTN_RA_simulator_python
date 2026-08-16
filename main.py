@@ -729,6 +729,91 @@ def channel_visibility(UE_location, satellite, min_elevation,t):
     alt, az, distance = topocentric.altaz()
     return alt.degrees > min_elevation, alt.degrees, distance.km
 
+
+def generate_ue_locations(
+    num_ue,
+    center,
+    radius_km,
+    distribution="uniform",
+    random_generator=None,
+):
+    """Generate fixed UE locations inside the circular service area."""
+    num_ue = int(num_ue)
+    radius_km = float(radius_km)
+    if num_ue < 0:
+        raise ValueError("num_ue must be non-negative.")
+    if not np.isfinite(radius_km) or radius_km <= 0:
+        raise ValueError("radius_km must be a finite positive value.")
+    if len(center) != 2:
+        raise ValueError("center must contain latitude and longitude.")
+
+    supported_distributions = {
+        "uniform",
+        "center_concentrated",
+        "two_hotspot",
+    }
+    if distribution not in supported_distributions:
+        raise ValueError(
+            f"Unknown UE spatial distribution {distribution!r}; expected one of "
+            f"{sorted(supported_distributions)}."
+        )
+    rng = np.random if random_generator is None else random_generator
+
+    if distribution == "uniform":
+        # Keep the original draw order so the default path remains unchanged.
+        locations = np.empty((num_ue, 2), dtype=float)
+        latitude_bound = radius_km / 111.0
+        longitude_bound = radius_km / 100.0
+        for index in range(num_ue):
+            radius_fraction = np.sqrt(rng.uniform(0.0, 1.0))
+            angle = rng.uniform(0.0, 2.0 * np.pi)
+            locations[index, 0] = (
+                float(center[0])
+                + radius_fraction * np.sin(angle) * latitude_bound
+            )
+            locations[index, 1] = (
+                float(center[1])
+                + radius_fraction * np.cos(angle) * longitude_bound
+            )
+        return locations
+
+    x_km = np.empty(num_ue, dtype=float)
+    y_km = np.empty(num_ue, dtype=float)
+    if distribution == "center_concentrated":
+        standard_deviation_km = radius_km / 3.0
+        invalid = np.ones(num_ue, dtype=bool)
+        while np.any(invalid):
+            indices = np.flatnonzero(invalid)
+            x_km[indices] = rng.normal(0.0, standard_deviation_km, len(indices))
+            y_km[indices] = rng.normal(0.0, standard_deviation_km, len(indices))
+            invalid[indices] = (
+                x_km[indices] ** 2 + y_km[indices] ** 2 > radius_km ** 2
+            )
+    else:
+        standard_deviation_km = radius_km / 6.0
+        hotspot_x_km = np.empty(num_ue, dtype=float)
+        western_count = num_ue // 2
+        hotspot_x_km[:western_count] = -0.45 * radius_km
+        hotspot_x_km[western_count:] = 0.45 * radius_km
+        rng.shuffle(hotspot_x_km)
+        invalid = np.ones(num_ue, dtype=bool)
+        while np.any(invalid):
+            indices = np.flatnonzero(invalid)
+            x_km[indices] = rng.normal(
+                hotspot_x_km[indices],
+                standard_deviation_km,
+                len(indices),
+            )
+            y_km[indices] = rng.normal(0.0, standard_deviation_km, len(indices))
+            invalid[indices] = (
+                x_km[indices] ** 2 + y_km[indices] ** 2 > radius_km ** 2
+            )
+
+    center_latitude, center_longitude = map(float, center)
+    latitudes = center_latitude + y_km / 111.0
+    longitudes = center_longitude + x_km / 100.0
+    return np.column_stack((latitudes, longitudes))
+
 def update_visibility_batch(ue_list, sat_list, current_time_obj, mode, min_elevation=0, chunk_size=5000):
     # 此次 2026/6/9 凌晨 visibility 加速修改：每個 RAO 仍完整更新 visibility，但改成批次 ECEF/ENU 投影，避免 UE*衛星 次 Skyfield altaz 呼叫。
     sat_count = len(sat_list)
@@ -976,6 +1061,8 @@ def main(
     GROUP_TABLE_FILENAME="group_ps_table.npz",
     SATELLITE_POOL_FILENAME="fixed_satellite_pool.json",
     COLLECT_BACKOFF_OPTIMIZER_DIAGNOSTICS=False,
+    UE_SPATIAL_DISTRIBUTION="uniform",
+    UE_LOCATION_SEED=None,
 ):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
@@ -1007,6 +1094,7 @@ def main(
     print(f"Service radius: {SERVICE_RADIUS_KM:g} km")
     print(f"Satellite pool: {SATELLITE_POOL_FILENAME}")
     print(f"Group table: {GROUP_TABLE_FILENAME}")
+    print(f"Actual UE spatial distribution: {UE_SPATIAL_DISTRIBUTION}")
     if selection_mode == 5:
         print(f"Mode 5 load EMA beta: {LOAD_AWARE_LOAD_EMA_BETA}")
     # Optional QoS sweep hook: use the default delay distribution when none is provided.
@@ -1093,18 +1181,29 @@ def main(
     ue_list = []
     R_km = SERVICE_RADIUS_KM
     c = [25.03, 121.56] # 台北中心點
-
-    # 2. 將公里半徑轉換為經緯度的最大邊界（軸向縮放）
-    lat_bound = R_km / 111.0
-    lon_bound = R_km / 100.0
-    for i in range(NUM_UE):
-        # 3. 圓形均勻抽樣
-        r = np.sqrt(np.random.uniform(0, 1)) # sqrt 確保地表真均勻分佈（不會往中心擠）
-        theta = np.random.uniform(0, 2 * np.pi)
-        # 4. 映射回實際經緯度
-        lat = c[0] + (r * np.sin(theta)) * lat_bound
-        lon = c[1] + (r * np.cos(theta)) * lon_bound
-        
+    location_rng = (
+        None
+        if UE_LOCATION_SEED is None
+        else np.random.RandomState(UE_LOCATION_SEED)
+    )
+    ue_locations = generate_ue_locations(
+        NUM_UE,
+        center=c,
+        radius_km=R_km,
+        distribution=UE_SPATIAL_DISTRIBUTION,
+        random_generator=location_rng,
+    )
+    if UE_LOCATION_SEED is not None:
+        # Keep packet arrivals, QoS draws, and channel randomness aligned with
+        # the legacy Uniform-location run in every spatial-distribution case.
+        generate_ue_locations(
+            NUM_UE,
+            center=c,
+            radius_km=R_km,
+            distribution="uniform",
+            random_generator=np.random,
+        )
+    for i, (lat, lon) in enumerate(ue_locations):
         ue = UE(location=[lat, lon], id=i, rho=RHO)
         ue.QoS_requirement = qos_distribution.copy()
         ue_list.append(ue)
@@ -1476,6 +1575,7 @@ def main(
         "selection_policy_variation_mean": selection_policy_variation_mean,
         "selection_policy_variation_max": selection_policy_variation_max,
         "backoff_optimizer_history": ctrl.backoff_optimizer_history,
+        "ue_spatial_distribution": UE_SPATIAL_DISTRIBUTION,
     }
     if COLLECT_COLLISION_DIAGNOSTICS:
         run_history["collision_history"] = collision_history
