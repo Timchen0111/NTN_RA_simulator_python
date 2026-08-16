@@ -3937,10 +3937,7 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
         fontsize=9,
     )
     accuracy_axis.set(
-        title=(
-            "Impact of Spatial-Distribution Mismatch on Preamble "
-            "Transmission Success Probability Prediction"
-        ),
+        title=r"Impact of Spatial-Distribution Mismatch on $\theta$ Prediction",
         ylabel=r"MAE of $\theta$",
         xticks=distribution_axis,
         xticklabels=distribution_labels,
