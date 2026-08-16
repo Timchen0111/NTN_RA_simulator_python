@@ -158,7 +158,7 @@ import main
 #    Keep the virtual-UE reference uniform and compare Uniform,
 #    Center-concentrated, and Two-hotspot actual UE distributions through an
 #    offline per-RAO geometry evaluation of transmission success probability
-#    and its prediction error.
+#    theta and its prediction error.
 #
 # =============================================================================
 EXPERIMENT_CODE = 22
@@ -3636,9 +3636,9 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
     SERVICE_RADIUS_KM = 200.0
     SATELLITE_POOL_FILENAME = Path("fixed_satellite_pool.json")
     GROUP_TABLE_FILENAME = Path("group_ps_table.npz")
-    OUTPUT_FIGURE = Path("ue_spatial_distribution_ps_comparison.png")
+    OUTPUT_FIGURE = Path("ue_spatial_distribution_theta_accuracy.png")
     OUTPUT_PDF = Path(
-        "output/pdf/ue_spatial_distribution_ps_comparison.pdf"
+        "output/pdf/ue_spatial_distribution_theta_accuracy.pdf"
     )
     DISTRIBUTION_SCENARIOS = (
         ("Uniform", "uniform"),
@@ -3829,8 +3829,9 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
     }
 
     for sample_index, rao in enumerate(evaluation_rao_indices):
-        weights = weight_table[rao]
-        group_ps = ps_table[rao]
+        rao_index = int(rao)
+        weights = weight_table[rao_index]
+        group_ps = ps_table[rao_index]
         policy = solve_group_selection_policy(
             weights,
             group_ps,
@@ -3847,7 +3848,7 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
         predicted_ps_by_rao[sample_index] = float(np.sum(effective_load))
 
         current_dt = scenario["start_dt"] + timedelta(
-            milliseconds=rao * trao_ms
+            milliseconds=rao_index * trao_ms
         )
         current_time = timescale.from_datetime(current_dt)
         satellite_ecef = np.stack([
@@ -3874,7 +3875,7 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
 
         print(
             f"Evaluated sampled RAO {sample_index + 1}/"
-            f"{evaluation_count} (RAO index {rao})"
+            f"{evaluation_count} (RAO index {rao_index})"
         )
 
     distribution_results = []
@@ -3896,16 +3897,16 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
 
     print("\n--- Mode 22 Results ---")
     print(
-        f"{'Actual UE distribution':<24} | {'Actual p_s':>10} | "
-        f"{'Pred. p_s':>10} | {'MAE':>9} | {'RMSE':>9} | "
+        f"{'Actual UE distribution':<24} | {'Actual theta':>12} | "
+        f"{'Pred. theta':>11} | {'MAE':>9} | {'RMSE':>9} | "
         f"{'Bias':>9} | {'Fallback':>9}"
     )
-    print("-" * 102)
+    print("-" * 105)
     for result in distribution_results:
         print(
             f"{result['distribution']:<24} | "
-            f"{result['mean_actual_ps']:10.6f} | "
-            f"{result['mean_predicted_ps']:10.6f} | "
+            f"{result['mean_actual_ps']:12.6f} | "
+            f"{result['mean_predicted_ps']:11.6f} | "
             f"{result['ps_mae']:9.6f} | "
             f"{result['ps_rmse']:9.6f} | "
             f"{result['ps_bias']:+9.6f} | "
@@ -3913,57 +3914,16 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
         )
 
     distribution_axis = np.arange(len(distribution_results), dtype=float)
-    actual_ps_values = np.asarray([
-        result["mean_actual_ps"]
-        for result in distribution_results
-    ])
     ps_mae_values = np.array([
         result["ps_mae"]
         for result in distribution_results
     ])
-    mean_predicted_ps = float(np.mean(predicted_ps_by_rao))
     distribution_labels = [
         result["distribution"]
         for result in distribution_results
     ]
 
-    figure, (success_axis, accuracy_axis) = plt.subplots(
-        1,
-        2,
-        figsize=(12.5, 5.5),
-        dpi=140,
-    )
-    success_bars = success_axis.bar(
-        distribution_axis,
-        actual_ps_values,
-        width=0.58,
-        color="#4C78A8",
-        label="Actual-distribution evaluation",
-    )
-    success_axis.axhline(
-        mean_predicted_ps,
-        color="#E45756",
-        linewidth=2,
-        linestyle="--",
-        label="Uniform virtual-UE prediction",
-    )
-    success_axis.bar_label(
-        success_bars,
-        labels=[f"{value:.4f}" for value in actual_ps_values],
-        padding=3,
-        fontsize=9,
-    )
-    success_axis.set(
-        title="Preamble Success Probability",
-        xlabel="Actual UE spatial distribution",
-        ylabel="Preamble transmission success probability",
-        xticks=distribution_axis,
-        xticklabels=distribution_labels,
-    )
-    success_axis.legend(loc="best")
-    success_axis.grid(axis="y", alpha=0.25)
-    success_axis.set_axisbelow(True)
-
+    figure, accuracy_axis = plt.subplots(figsize=(7.5, 5.5), dpi=140)
     accuracy_bars = accuracy_axis.bar(
         distribution_axis,
         ps_mae_values,
@@ -3977,18 +3937,16 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
         fontsize=9,
     )
     accuracy_axis.set(
-        title="Prediction Accuracy",
-        xlabel="Actual UE spatial distribution",
-        ylabel=r"Mean absolute prediction error of $p_s$ (lower is better)",
+        title=(
+            "Prediction Accuracy of Preamble Transmission "
+            "Success Probability"
+        ),
+        ylabel=r"MAE of $\theta$",
         xticks=distribution_axis,
         xticklabels=distribution_labels,
     )
     accuracy_axis.grid(axis="y", alpha=0.25)
     accuracy_axis.set_axisbelow(True)
-    figure.suptitle(
-        "Effect of Actual UE Spatial Distribution",
-        fontsize=14,
-    )
     figure.tight_layout()
     figure.savefig(OUTPUT_FIGURE, bbox_inches="tight")
     OUTPUT_PDF.parent.mkdir(parents=True, exist_ok=True)
