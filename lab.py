@@ -156,7 +156,9 @@ import main
 #
 # 22 RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON
 #    Keep the virtual-UE reference uniform and compare Uniform,
-#    Center-concentrated, and Two-hotspot actual UE distributions.
+#    Center-concentrated, and Two-hotspot actual UE distributions through an
+#    offline per-RAO geometry evaluation of transmission success probability
+#    and its prediction error.
 #
 # =============================================================================
 EXPERIMENT_CODE = 22
@@ -2415,6 +2417,7 @@ if RUN_TOP_K_GROUPING_ANALYSIS:
         weight_table = top_k_data["group_weight_table"]
         ps_table = top_k_data["group_ps_table"]
         rao_indices = np.asarray(top_k_data["rao_indices"], dtype=int)
+        table_seconds = int(top_k_data["seconds"])
         trao_ms = int(top_k_data["trao_ms"])
         num_ues = int(top_k_data["num_points"])
         table_seed = int(top_k_data["random_seed"])
@@ -2447,9 +2450,20 @@ if RUN_TOP_K_GROUPING_ANALYSIS:
         )
     if table_tle_hash != scenario["tle_file_sha256"]:
         raise ValueError("Top-3 table and current TLE file do not match.")
+    if SIM_SECONDS > table_seconds:
+        raise ValueError(
+            f"Mode 18 requests {SIM_SECONDS} seconds, but {TABLE_FILE} "
+            f"only covers {table_seconds} seconds."
+        )
+    requested_end_rao = SIM_SECONDS * 1000 // trao_ms
+    rows = np.flatnonzero(rao_indices < requested_end_rao)
+    if len(rows) == 0:
+        raise ValueError(
+            "Mode 18 requires SIM_SECONDS to include at least one "
+            "sampled RAO."
+        )
     timescale = load.timescale()
     random_generator = np.random.default_rng(TOP_K_SEED)
-    rows = np.arange(len(rao_indices))
     top_k_results = []
 
     for row in rows:
@@ -2521,8 +2535,8 @@ if RUN_TOP_K_GROUPING_ANALYSIS:
     save_top_k_tradeoff_figure(top_k_results)
 
     print(
-        f"Analyzed all {len(rows)} table RAOs: "
-        f"{int(rao_indices[rows[0]])} to "
+        f"Analyzed {len(rows)} sampled RAOs over the first "
+        f"{SIM_SECONDS} seconds: {int(rao_indices[rows[0]])} to "
         f"{int(rao_indices[rows[-1]])}"
     )
     for name, predicted_values, simulated_values in zip(
@@ -3603,23 +3617,114 @@ if RUN_SATELLITE_POOL_REALIZATION_COMPARISON:
 
 
 if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
+    import warnings
+    from datetime import timedelta
     from pathlib import Path
+
+    from skyfield.api import load, wgs84
+    from skyfield.framelib import itrs
+
+    from scenario_time import get_tle_scenario_metadata
+    from selection import solve_group_selection_policy
 
     NUM_UE = 10000
     SECONDS = SIM_SECONDS
     SEED = 42
-    RHO = 1.5
     IMBALANCE_EPSILON = 0.001
-    USE_REAL_PS = False
-    MODE = [6, 1]
+    SAMPLED_RAO_STEP = 10
+    CENTER = (25.03, 121.56)
     SERVICE_RADIUS_KM = 200.0
     SATELLITE_POOL_FILENAME = Path("fixed_satellite_pool.json")
     GROUP_TABLE_FILENAME = Path("group_ps_table.npz")
+    OUTPUT_FIGURE = Path("ue_spatial_distribution_ps_comparison.png")
+    OUTPUT_PDF = Path(
+        "output/pdf/ue_spatial_distribution_ps_comparison.pdf"
+    )
     DISTRIBUTION_SCENARIOS = (
         ("Uniform", "uniform"),
         ("Center-concentrated", "center_concentrated"),
         ("Two-hotspot", "two_hotspot"),
     )
+    warnings.filterwarnings(
+        "ignore",
+        message="invalid value encountered in reduce",
+        category=RuntimeWarning,
+    )
+
+    def prepare_mode22_ue_geometry(distribution):
+        coordinates = main.generate_ue_locations(
+            NUM_UE,
+            CENTER,
+            SERVICE_RADIUS_KM,
+            distribution=distribution,
+            random_generator=np.random.RandomState(SEED),
+        )
+        lat_rad = np.deg2rad(coordinates[:, 0])
+        lon_rad = np.deg2rad(coordinates[:, 1])
+        geo = wgs84.latlon(coordinates[:, 0], coordinates[:, 1])
+        ecef = np.asarray(geo.itrs_xyz.km, dtype=float).T
+        east = np.column_stack((
+            -np.sin(lon_rad),
+            np.cos(lon_rad),
+            np.zeros(NUM_UE),
+        ))
+        north = np.column_stack((
+            -np.sin(lat_rad) * np.cos(lon_rad),
+            -np.sin(lat_rad) * np.sin(lon_rad),
+            np.cos(lat_rad),
+        ))
+        up = np.column_stack((
+            np.cos(lat_rad) * np.cos(lon_rad),
+            np.cos(lat_rad) * np.sin(lon_rad),
+            np.sin(lat_rad),
+        ))
+        return ecef, east, north, up
+
+    def get_mode22_channel_data(satellite_ecef, ue_geometry):
+        ecef, east, north, up = ue_geometry
+        delta = satellite_ecef[None, :, :] - ecef[:, None, :]
+        up_component = np.einsum("nkd,nd->nk", delta, up)
+        east_component = np.einsum("nkd,nd->nk", delta, east)
+        north_component = np.einsum("nkd,nd->nk", delta, north)
+        angles = np.degrees(np.arctan2(
+            up_component,
+            np.hypot(east_component, north_component),
+        ))
+        distances = np.linalg.norm(delta, axis=2)
+        channel_ps = main.estimate_channel_success_probability(
+            angles,
+            distances,
+        )
+        ranking = np.argsort(angles, axis=1)[:, ::-1]
+        return channel_ps, ranking
+
+    def evaluate_mode22_policy(policy, channel_ps, ranking):
+        num_sats = channel_ps.shape[1]
+        group_codes = ranking[:, 0] * num_sats + ranking[:, 1]
+        per_ue_expected_ps = np.empty(channel_ps.shape[0], dtype=float)
+        fallback_count = 0
+
+        for group_code in np.unique(group_codes):
+            ue_indices = np.flatnonzero(group_codes == group_code)
+            group = (
+                int(group_code // num_sats),
+                int(group_code % num_sats),
+            )
+            selection_probabilities = policy.get(group)
+            if selection_probabilities is None:
+                best_satellites = ranking[ue_indices, 0]
+                per_ue_expected_ps[ue_indices] = channel_ps[
+                    ue_indices,
+                    best_satellites,
+                ]
+                fallback_count += len(ue_indices)
+            else:
+                per_ue_expected_ps[ue_indices] = (
+                    channel_ps[ue_indices]
+                    @ np.asarray(selection_probabilities, dtype=float)
+                )
+
+        return float(np.mean(per_ue_expected_ps)), fallback_count
 
     missing_inputs = [
         str(path)
@@ -3634,133 +3739,262 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
         )
 
     with np.load(GROUP_TABLE_FILENAME, allow_pickle=True) as table_data:
+        weight_table = table_data["group_weight_table"]
+        ps_table = table_data["group_ps_table"]
         table_seconds = int(table_data["seconds"])
+        trao_ms = int(table_data["trao_ms"])
         virtual_ue_count = int(table_data["num_points"])
+        table_satellite_ids = np.asarray(
+            table_data["sat_norad_ids"],
+            dtype=int,
+        )
+        table_start_dt_iso = str(table_data["scenario_start_dt_iso"])
+        table_tle_hash = str(table_data["tle_file_sha256"])
     if SECONDS > table_seconds:
         raise ValueError(
             f"Mode 22 requests {SECONDS} seconds, but "
             f"{GROUP_TABLE_FILENAME} only contains {table_seconds} seconds."
         )
 
+    requested_end_rao = SECONDS * 1000 // trao_ms
+    if requested_end_rao <= 0:
+        raise ValueError(
+            "Mode 22 requires SIM_SECONDS to cover at least one RAO."
+        )
+    if requested_end_rao > len(weight_table):
+        raise ValueError(
+            f"Mode 22 requests data through RAO {requested_end_rao - 1}, but "
+            f"{GROUP_TABLE_FILENAME} only contains {len(weight_table)} RAOs."
+        )
+    evaluation_rao_indices = np.arange(
+        0,
+        requested_end_rao,
+        SAMPLED_RAO_STEP,
+        dtype=int,
+    )
+    evaluation_count = len(evaluation_rao_indices)
+
+    real_sats = main.load_fixed_satellites(
+        filename=str(SATELLITE_POOL_FILENAME)
+    )
+    actual_satellite_ids = np.asarray([
+        int(satellite.model.satnum)
+        for satellite in real_sats
+    ])
+    if not np.array_equal(actual_satellite_ids, table_satellite_ids):
+        raise ValueError(
+            "Baseline satellite pool does not match the uniform virtual-UE "
+            "group table."
+        )
+
+    scenario = get_tle_scenario_metadata()
+    if table_start_dt_iso != scenario["start_dt_iso"]:
+        raise ValueError(
+            "Uniform virtual-UE table and current scenario start time do "
+            "not match."
+        )
+    if table_tle_hash != scenario["tle_file_sha256"]:
+        raise ValueError(
+            "Uniform virtual-UE table and current TLE file do not match."
+        )
+
+    ue_geometries = {
+        distribution_key: prepare_mode22_ue_geometry(distribution_key)
+        for _, distribution_key in DISTRIBUTION_SCENARIOS
+    }
+    timescale = load.timescale()
+
     print("\n=== Mode 22: Actual UE Spatial-Distribution Comparison ===")
-    print(f"Simulation time: {SECONDS} seconds")
+    print("Evaluation: offline per-RAO geometry analysis")
+    print(f"Reference time: {scenario['start_dt_iso']}")
+    print(
+        f"Evaluation interval: first {SECONDS} seconds "
+        f"({evaluation_count} sampled RAOs, "
+        f"{SAMPLED_RAO_STEP * trao_ms} ms sampling interval)"
+    )
     print(f"Actual UE count: {NUM_UE}")
     print(f"Virtual UE reference: Uniform ({virtual_ue_count} points)")
     print(f"Service radius: {SERVICE_RADIUS_KM:g} km")
-    print(f"Arrival rate: {RHO:g} packets/s")
     print("Method: DCLARA")
     print(f"Random seed: {SEED}")
 
+    predicted_ps_by_rao = np.empty(evaluation_count, dtype=float)
+    actual_ps_by_distribution = {
+        distribution_key: np.empty(evaluation_count, dtype=float)
+        for _, distribution_key in DISTRIBUTION_SCENARIOS
+    }
+    fallback_count_by_distribution = {
+        distribution_key: 0
+        for _, distribution_key in DISTRIBUTION_SCENARIOS
+    }
+
+    for sample_index, rao in enumerate(evaluation_rao_indices):
+        weights = weight_table[rao]
+        group_ps = ps_table[rao]
+        policy = solve_group_selection_policy(
+            weights,
+            group_ps,
+            sat_num=len(real_sats),
+            imbalance_epsilon=IMBALANCE_EPSILON,
+            initial_policy=None,
+        )
+        effective_load = sum(
+            float(weights[group])
+            * np.asarray(policy[tuple(group)], dtype=float)
+            * np.asarray(group_ps[tuple(group)], dtype=float)
+            for group in weights
+        )
+        predicted_ps_by_rao[sample_index] = float(np.sum(effective_load))
+
+        current_dt = scenario["start_dt"] + timedelta(
+            milliseconds=rao * trao_ms
+        )
+        current_time = timescale.from_datetime(current_dt)
+        satellite_ecef = np.stack([
+            satellite.at(current_time).frame_xyz(itrs).km
+            for satellite in real_sats
+        ])
+
+        for _, distribution_key in DISTRIBUTION_SCENARIOS:
+            channel_ps, ranking = get_mode22_channel_data(
+                satellite_ecef,
+                ue_geometries[distribution_key],
+            )
+            actual_ps, fallback_count = evaluate_mode22_policy(
+                policy,
+                channel_ps,
+                ranking,
+            )
+            actual_ps_by_distribution[distribution_key][sample_index] = (
+                actual_ps
+            )
+            fallback_count_by_distribution[distribution_key] += (
+                fallback_count
+            )
+
+        print(
+            f"Evaluated sampled RAO {sample_index + 1}/"
+            f"{evaluation_count} (RAO index {rao})"
+        )
+
     distribution_results = []
     for distribution_label, distribution_key in DISTRIBUTION_SCENARIOS:
-        print(
-            f"\nRunning Actual UE distribution: {distribution_label}; "
-            "Virtual UE distribution: Uniform"
-        )
-        (
-            average_throughput,
-            packet_loss_rate,
-            n_history,
-            _,
-            _,
-            _,
-            run_history,
-        ) = main.main(
-            RHO,
-            SECONDS,
-            NUM_UE,
-            MODE,
-            SEED,
-            IMBALANCE_EPSILON,
-            USE_REAL_PS=USE_REAL_PS,
-            SERVICE_RADIUS_KM=SERVICE_RADIUS_KM,
-            GROUP_TABLE_FILENAME=str(GROUP_TABLE_FILENAME),
-            SATELLITE_POOL_FILENAME=str(SATELLITE_POOL_FILENAME),
-            UE_SPATIAL_DISTRIBUTION=distribution_key,
-            UE_LOCATION_SEED=SEED,
-        )
-        final_n_estimate = (
-            float(n_history[-1]) if len(n_history) > 0 else np.nan
-        )
+        actual_values = actual_ps_by_distribution[distribution_key]
+        prediction_error = actual_values - predicted_ps_by_rao
+        fallback_count = fallback_count_by_distribution[distribution_key]
         distribution_results.append({
             "distribution": distribution_label,
-            "throughput": float(average_throughput),
-            "plr": float(packet_loss_rate),
-            "average_delay_ms": float(
-                run_history.get("average_delay_ms", np.nan)
+            "mean_actual_ps": float(np.mean(actual_values)),
+            "mean_predicted_ps": float(np.mean(predicted_ps_by_rao)),
+            "ps_mae": float(np.mean(np.abs(prediction_error))),
+            "ps_rmse": float(np.sqrt(np.mean(prediction_error ** 2))),
+            "ps_bias": float(np.mean(prediction_error)),
+            "fallback_rate": float(
+                fallback_count / (NUM_UE * evaluation_count)
             ),
-            "deadline_budget_utilization": float(
-                run_history.get(
-                    "average_deadline_budget_utilization",
-                    np.nan,
-                )
-            ),
-            "final_n_estimate": final_n_estimate,
         })
 
     print("\n--- Mode 22 Results ---")
     print(
-        f"{'Actual UE distribution':<24} | {'Throughput':>10} | "
-        f"{'PLR':>8} | {'Delay ms':>9} | {'DB util.':>8} | {'Final N':>10}"
+        f"{'Actual UE distribution':<24} | {'Actual p_s':>10} | "
+        f"{'Pred. p_s':>10} | {'MAE':>9} | {'RMSE':>9} | "
+        f"{'Bias':>9} | {'Fallback':>9}"
     )
-    print("-" * 91)
+    print("-" * 102)
     for result in distribution_results:
-        deadline_utilization = result["deadline_budget_utilization"]
-        deadline_text = (
-            f"{deadline_utilization * 100:.2f}%"
-            if np.isfinite(deadline_utilization)
-            else "N/A"
-        )
-        delay_text = (
-            f"{result['average_delay_ms']:.2f}"
-            if np.isfinite(result["average_delay_ms"])
-            else "N/A"
-        )
-        final_n_text = (
-            f"{result['final_n_estimate']:.2f}"
-            if np.isfinite(result["final_n_estimate"])
-            else "N/A"
-        )
         print(
             f"{result['distribution']:<24} | "
-            f"{result['throughput']:10.2f} | "
-            f"{result['plr']:8.4f} | "
-            f"{delay_text:>9} | "
-            f"{deadline_text:>8} | "
-            f"{final_n_text:>10}"
+            f"{result['mean_actual_ps']:10.6f} | "
+            f"{result['mean_predicted_ps']:10.6f} | "
+            f"{result['ps_mae']:9.6f} | "
+            f"{result['ps_rmse']:9.6f} | "
+            f"{result['ps_bias']:+9.6f} | "
+            f"{result['fallback_rate'] * 100:8.3f}%"
         )
 
     distribution_axis = np.arange(len(distribution_results), dtype=float)
-    plr_percent = np.array([
-        result["plr"] * 100.0
+    actual_ps_values = np.asarray([
+        result["mean_actual_ps"]
         for result in distribution_results
     ])
-    figure, axis = plt.subplots(figsize=(9.5, 6), dpi=140)
-    bars = axis.bar(
+    ps_mae_values = np.array([
+        result["ps_mae"]
+        for result in distribution_results
+    ])
+    mean_predicted_ps = float(np.mean(predicted_ps_by_rao))
+    distribution_labels = [
+        result["distribution"]
+        for result in distribution_results
+    ]
+
+    figure, (success_axis, accuracy_axis) = plt.subplots(
+        1,
+        2,
+        figsize=(12.5, 5.5),
+        dpi=140,
+    )
+    success_bars = success_axis.bar(
         distribution_axis,
-        plr_percent,
+        actual_ps_values,
         width=0.58,
         color="#4C78A8",
+        label="Actual-distribution evaluation",
     )
-    axis.bar_label(
-        bars,
-        labels=[f"{value:.2f}%" for value in plr_percent],
+    success_axis.axhline(
+        mean_predicted_ps,
+        color="#E45756",
+        linewidth=2,
+        linestyle="--",
+        label="Uniform virtual-UE prediction",
+    )
+    success_axis.bar_label(
+        success_bars,
+        labels=[f"{value:.4f}" for value in actual_ps_values],
         padding=3,
         fontsize=9,
     )
-    axis.set(
-        title="PLR under Different Actual UE Spatial Distributions",
+    success_axis.set(
+        title="Preamble Success Probability",
         xlabel="Actual UE spatial distribution",
-        ylabel="Packet Loss Rate (%)",
+        ylabel="Preamble transmission success probability",
         xticks=distribution_axis,
-        xticklabels=[
-            result["distribution"]
-            for result in distribution_results
-        ],
+        xticklabels=distribution_labels,
     )
-    axis.grid(axis="y", alpha=0.25)
-    axis.set_axisbelow(True)
+    success_axis.legend(loc="best")
+    success_axis.grid(axis="y", alpha=0.25)
+    success_axis.set_axisbelow(True)
+
+    accuracy_bars = accuracy_axis.bar(
+        distribution_axis,
+        ps_mae_values,
+        width=0.58,
+        color="#72B7B2",
+    )
+    accuracy_axis.bar_label(
+        accuracy_bars,
+        labels=[f"{value:.4f}" for value in ps_mae_values],
+        padding=3,
+        fontsize=9,
+    )
+    accuracy_axis.set(
+        title="Prediction Accuracy",
+        xlabel="Actual UE spatial distribution",
+        ylabel=r"Mean absolute prediction error of $p_s$ (lower is better)",
+        xticks=distribution_axis,
+        xticklabels=distribution_labels,
+    )
+    accuracy_axis.grid(axis="y", alpha=0.25)
+    accuracy_axis.set_axisbelow(True)
+    figure.suptitle(
+        "Effect of Actual UE Spatial Distribution",
+        fontsize=14,
+    )
     figure.tight_layout()
+    figure.savefig(OUTPUT_FIGURE, bbox_inches="tight")
+    OUTPUT_PDF.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(OUTPUT_PDF, bbox_inches="tight")
+    print(f"\nSaved figure: {OUTPUT_FIGURE}")
+    print(f"Saved PDF: {OUTPUT_PDF}")
     plt.show()
     raise SystemExit
 
