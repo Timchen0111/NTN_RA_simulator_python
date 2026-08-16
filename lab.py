@@ -3938,8 +3938,8 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
     )
     accuracy_axis.set(
         title=(
-            "Prediction Accuracy of Preamble Transmission "
-            "Success Probability"
+            "Impact of Spatial-Distribution Mismatch on Preamble "
+            "Transmission Success Probability Prediction"
         ),
         ylabel=r"MAE of $\theta$",
         xticks=distribution_axis,
