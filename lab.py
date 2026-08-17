@@ -156,7 +156,8 @@ import main
 #
 # 22 RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON
 #    Keep the virtual-UE reference uniform and sweep the actual UE normalized
-#    enclosed-area distribution u ~ Beta(1, b), b=1,...,5, through the existing
+#    enclosed-area distribution u ~ Beta(1, b), b in {1, 1.25, 1.5, 2},
+#    through the existing
 #    offline per-RAO evaluation of transmission success probability theta and
 #    its prediction error.
 #
@@ -258,7 +259,7 @@ def validate_beta_spatial_sampler(
 
     print("\n--- Beta Spatial Sampler Sanity Checks ---")
     print(
-        f"{'b':>3} | {'Sample E[u]':>12} | {'Theory E[u]':>12} | "
+        f"{'b':>5} | {'Sample E[u]':>12} | {'Theory E[u]':>12} | "
         f"{'Max u':>10} | {'Angular mean':>12}"
     )
     print("-" * 62)
@@ -282,7 +283,7 @@ def validate_beta_spatial_sampler(
         maximum_u = float(np.max(normalized_radius_squared))
         angular_mean = float(np.abs(np.mean(np.exp(1j * angles))))
         print(
-            f"{int(beta_b):3d} | {sample_mean:12.6f} | "
+            f"{float(beta_b):5g} | {sample_mean:12.6f} | "
             f"{theoretical_mean:12.6f} | {maximum_u:10.6f} | "
             f"{angular_mean:12.6f}"
         )
@@ -3732,7 +3733,7 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
     OUTPUT_PDF = Path(
         "output/pdf/ue_spatial_distribution_theta_accuracy.pdf"
     )
-    BETA_B_VALUES = np.arange(1.0, 6.0)
+    BETA_B_VALUES = np.array([1.0, 1.25, 1.5, 2.0])
     UE_LOCATION_SEED = SEED
     validate_beta_spatial_sampler(
         CENTER,
@@ -3895,7 +3896,7 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
         )
 
     ue_geometries = {
-        int(beta_b): prepare_mode22_ue_geometry(beta_b)
+        float(beta_b): prepare_mode22_ue_geometry(beta_b)
         for beta_b in BETA_B_VALUES
     }
     timescale = load.timescale()
@@ -3911,18 +3912,18 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
     print(f"Actual UE count: {NUM_UE}")
     print(f"Virtual UE reference: Uniform ({virtual_ue_count} points)")
     print("Actual UE model: normalized enclosed area u ~ Beta(1, b)")
-    print(f"Beta b values: {[int(value) for value in BETA_B_VALUES]}")
+    print(f"Beta b values: {[float(value) for value in BETA_B_VALUES]}")
     print(f"Service radius: {SERVICE_RADIUS_KM:g} km")
     print("Method: DCLARA")
     print(f"Random seed: {SEED}")
 
     predicted_ps_by_rao = np.empty(evaluation_count, dtype=float)
     actual_ps_by_beta = {
-        int(beta_b): np.empty(evaluation_count, dtype=float)
+        float(beta_b): np.empty(evaluation_count, dtype=float)
         for beta_b in BETA_B_VALUES
     }
     fallback_count_by_beta = {
-        int(beta_b): 0
+        float(beta_b): 0
         for beta_b in BETA_B_VALUES
     }
 
@@ -3955,7 +3956,7 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
         ])
 
         for beta_b in BETA_B_VALUES:
-            beta_key = int(beta_b)
+            beta_key = float(beta_b)
             channel_ps, ranking = get_mode22_channel_data(
                 satellite_ecef,
                 ue_geometries[beta_key],
@@ -3979,7 +3980,7 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
 
     beta_results = []
     for beta_b in BETA_B_VALUES:
-        beta_key = int(beta_b)
+        beta_key = float(beta_b)
         actual_values = actual_ps_by_beta[beta_key]
         prediction_error = actual_values - predicted_ps_by_rao
         fallback_count = fallback_count_by_beta[beta_key]
@@ -3997,14 +3998,14 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
 
     print("\n--- Mode 22 Results ---")
     print(
-        f"{'b':>3} | {'Actual theta':>12} | "
+        f"{'b':>5} | {'Actual theta':>12} | "
         f"{'Pred. theta':>11} | {'MAE':>9} | {'RMSE':>9} | "
         f"{'Bias':>9} | {'Fallback':>9}"
     )
     print("-" * 85)
     for result in beta_results:
         print(
-            f"{result['beta_b']:3d} | "
+            f"{result['beta_b']:5g} | "
             f"{result['mean_actual_ps']:12.6f} | "
             f"{result['mean_predicted_ps']:11.6f} | "
             f"{result['ps_mae']:9.6f} | "
@@ -4060,7 +4061,7 @@ if RUN_BETA_SPATIAL_MISMATCH_COMPARISON:
     USE_REAL_PS = False
     CENTER = (25.03, 121.56)
     SERVICE_RADIUS_KM = 200.0
-    BETA_B_VALUES = np.arange(1.0, 6.0)
+    BETA_B_VALUES = np.array([1.0, 1.25, 1.5, 2.0])
     MODES = (
         ([6, 1], "DCLARA"),
         ([5, 3], "ALLA with SAACB"),
@@ -4079,7 +4080,7 @@ if RUN_BETA_SPATIAL_MISMATCH_COMPARISON:
     print("\n=== Mode 23: Beta Spatial-Distribution PLR Comparison ===")
     print("Actual UEs: normalized enclosed area u ~ Beta(1, b)")
     print("Virtual UEs: Uniform disk (unchanged precomputed group table)")
-    print(f"Beta b values: {[int(value) for value in BETA_B_VALUES]}")
+    print(f"Beta b values: {[float(value) for value in BETA_B_VALUES]}")
     print(f"Arrival rate: {RHO:g} packets/s")
     print(f"Simulation duration: {SECONDS} seconds")
     print(f"Simulation seed: {SEED}")
@@ -4088,7 +4089,7 @@ if RUN_BETA_SPATIAL_MISMATCH_COMPARISON:
     results = []
     plr_by_scheme = {label: [] for _, label in MODES}
     for beta_b in BETA_B_VALUES:
-        print(f"\nb={int(beta_b)}")
+        print(f"\nb={beta_b:g}")
         for mode, label in MODES:
             (
                 average_throughput,
@@ -4115,7 +4116,7 @@ if RUN_BETA_SPATIAL_MISMATCH_COMPARISON:
             average_delay_ms = float(run_history["average_delay_ms"])
             plr_by_scheme[label].append(plr)
             results.append({
-                "beta_b": int(beta_b),
+                "beta_b": float(beta_b),
                 "scheme": label,
                 "selection_mode": int(mode[0]),
                 "backoff_mode": int(mode[1]),
