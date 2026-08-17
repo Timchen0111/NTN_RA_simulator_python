@@ -2,7 +2,6 @@ from collections import Counter
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from matplotlib.ticker import MaxNLocator
 
 import Load_estimator
@@ -34,7 +33,7 @@ import main
 # 2  RHO_SWEEP_PB
 #    用途：比較不同 traffic load 下，各剩餘 delay state 的平均 backoff
 #          probability，檢查 backoff controller 的輸出行為。
-#    論文圖：Backoff controller performance heatmap
+#    論文圖：Backoff controller performance 3D bar chart
 #            backoff_heatmap.pdf, \label{fig: pb}
 #
 # 3  RUN_QOS_DISTRIBUTION_COMPARISON
@@ -167,8 +166,8 @@ import main
 #    DCLARA with the integrated ALLA with SAACB baseline.
 #
 # =============================================================================
-EXPERIMENT_CODE = 22
-SIM_SECONDS = 10
+EXPERIMENT_CODE = 2
+SIM_SECONDS = 5
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -178,7 +177,7 @@ OFFERED_LOAD_RHO_VALUES = np.array(
 EXPERIMENT_SWITCHES = {
     0: "Single-run diagnostics",
     1: "Integrated scheme comparison",
-    2: "Backoff probability heatmap",
+    2: "Backoff probability 3D bar chart",
     3: "Delay-budget distribution comparison",
     4: "Backoff control scheme comparison",
     5: "Fixed versus adaptive epsilon comparison",
@@ -439,38 +438,59 @@ if RHO_SWEEP_PB:
     rho_axis = np.array([item["rho"] for item in pb_results])
     average_p_b_matrix = np.vstack([item["average_p_b"] for item in pb_results])
 
-    plt.figure(figsize=(10, 6))
-    heatmap_data = average_p_b_matrix.T
-    masked_heatmap_data = np.ma.masked_invalid(heatmap_data)
-    heatmap_norm = TwoSlopeNorm(vmin=0.0, vcenter=0.8, vmax=1.0)
-    heatmap_cmap = LinearSegmentedColormap.from_list(
-        "light_backoff_probability",
-        [
-            "#f7fbff",
-            "#d9edf7",
-            "#9ecae1",
-            "#74c476",
-            "#fee391",
-            "#fdae6b",
-        ],
+    remaining_rao_axis = np.arange(1, 21, dtype=float)
+    if not np.all(np.isfinite(average_p_b_matrix)):
+        raise ValueError(
+            "The 3D bar chart requires 20 finite backoff probabilities "
+            "for every arrival rate."
+        )
+    remaining_rao_grid, rho_grid = np.meshgrid(
+        remaining_rao_axis,
+        rho_axis,
     )
-    im = plt.imshow(
-        masked_heatmap_data,
-        aspect="auto",
-        cmap=heatmap_cmap,
-        norm=heatmap_norm,
-        interpolation="nearest",
-    )
-    cbar = plt.colorbar(im)
-    cbar.set_label("Average backoff probability (expanded scale above 0.8)")
-    cbar.set_ticks([0.0, 0.2, 0.4, 0.6, 0.8, 0.85, 0.9, 0.95, 1.0])
+    bar_width = 0.62
+    if len(rho_axis) > 1:
+        bar_depth = 0.42 * float(np.min(np.diff(np.sort(rho_axis))))
+    else:
+        bar_depth = 0.2
+    x_positions = remaining_rao_grid.ravel() - bar_width / 2.0
+    y_positions = rho_grid.ravel() - bar_depth / 2.0
+    z_positions = np.zeros(average_p_b_matrix.size, dtype=float)
+    bar_heights = average_p_b_matrix.ravel()
 
-    plt.title("Average Backoff Probability under Different Arrival Rates")
-    plt.xlabel("Per-UE arrival rate (packets/s)")
-    plt.ylabel("Remaining RAO")
-    plt.xticks(np.arange(len(rho_axis)), [f"{rho:g}" for rho in rho_axis])
-    plt.yticks(np.arange(20), [str(idx) for idx in range(1, 21)])
-    plt.tight_layout()
+    figure = plt.figure(figsize=(10, 7))
+    axis = figure.add_subplot(111, projection="3d")
+    axis.bar3d(
+        x_positions,
+        y_positions,
+        z_positions,
+        bar_width,
+        bar_depth,
+        bar_heights,
+        color="#6FA8DC",
+        edgecolor="#4F5D75",
+        linewidth=0.25,
+        shade=True,
+    )
+    axis.set(
+        title="Average Backoff Probability under Different Arrival Rates",
+        xlabel="Remaining RAO",
+        ylabel="Per-UE arrival rate (packets/s)",
+        zlabel="Average backoff probability",
+        xlim=(20.6, 0.4),
+        ylim=(
+            float(np.min(rho_axis)) - bar_depth,
+            float(np.max(rho_axis)) + bar_depth,
+        ),
+        zlim=(0.0, 1.0),
+        xticks=[1, 5, 10, 15, 20],
+        yticks=rho_axis,
+        zticks=np.linspace(0.0, 1.0, 6),
+    )
+    axis.set_yticklabels([f"{rho:g}" for rho in rho_axis])
+    axis.view_init(elev=25, azim=-55)
+    axis.set_box_aspect((1.8, 1.2, 0.8))
+    figure.tight_layout()
     plt.show()
 
     print("\n--- Rho Sweep p_b Complete ---")
