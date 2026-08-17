@@ -156,7 +156,8 @@ import main
 #
 # 22 RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON
 #    Keep the virtual-UE reference uniform and sweep the actual UE normalized
-#    enclosed-area distribution u ~ Beta(1, b), b in {1, 1.25, 1.5, 2},
+#    enclosed-area distribution u ~ Beta(1, b),
+#    b in {1, 1.25, 1.5, 1.75, 2},
 #    through the existing
 #    offline per-RAO evaluation of transmission success probability theta and
 #    its prediction error.
@@ -3733,7 +3734,7 @@ if RUN_UE_SPATIAL_DISTRIBUTION_COMPARISON:
     OUTPUT_PDF = Path(
         "output/pdf/ue_spatial_distribution_theta_accuracy.pdf"
     )
-    BETA_B_VALUES = np.array([1.0, 1.25, 1.5, 2.0])
+    BETA_B_VALUES = np.array([1.0, 1.25, 1.5, 1.75, 2.0])
     UE_LOCATION_SEED = SEED
     validate_beta_spatial_sampler(
         CENTER,
@@ -4061,7 +4062,7 @@ if RUN_BETA_SPATIAL_MISMATCH_COMPARISON:
     USE_REAL_PS = False
     CENTER = (25.03, 121.56)
     SERVICE_RADIUS_KM = 200.0
-    BETA_B_VALUES = np.array([1.0, 1.25, 1.5, 2.0])
+    BETA_B_VALUES = np.array([1.0, 1.25, 1.5, 1.75, 2.0])
     MODES = (
         ([6, 1], "DCLARA"),
         ([5, 3], "ALLA with SAACB"),
