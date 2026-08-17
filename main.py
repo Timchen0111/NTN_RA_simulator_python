@@ -736,6 +736,7 @@ def generate_ue_locations(
     radius_km,
     distribution="uniform",
     random_generator=None,
+    beta_b=1.0,
 ):
     """Generate fixed UE locations inside the circular service area."""
     num_ue = int(num_ue)
@@ -749,6 +750,7 @@ def generate_ue_locations(
 
     supported_distributions = {
         "uniform",
+        "beta_enclosed_area",
         "center_concentrated",
         "two_hotspot",
     }
@@ -759,13 +761,24 @@ def generate_ue_locations(
         )
     rng = np.random if random_generator is None else random_generator
 
-    if distribution == "uniform":
+    if distribution == "beta_enclosed_area":
+        beta_b = float(beta_b)
+        if not np.isfinite(beta_b) or beta_b <= 0.0:
+            raise ValueError("beta_b must be a finite positive value.")
+
+    if distribution in ("uniform", "beta_enclosed_area"):
         # Keep the original draw order so the default path remains unchanged.
+        # beta_b=1 deliberately uses the original uniform draw itself, making
+        # the special case identical for a fixed RNG state as well as in law.
         locations = np.empty((num_ue, 2), dtype=float)
         latitude_bound = radius_km / 111.0
         longitude_bound = radius_km / 100.0
         for index in range(num_ue):
-            radius_fraction = np.sqrt(rng.uniform(0.0, 1.0))
+            if distribution == "uniform" or beta_b == 1.0:
+                enclosed_area_fraction = rng.uniform(0.0, 1.0)
+            else:
+                enclosed_area_fraction = rng.beta(1.0, beta_b)
+            radius_fraction = np.sqrt(enclosed_area_fraction)
             angle = rng.uniform(0.0, 2.0 * np.pi)
             locations[index, 0] = (
                 float(center[0])
@@ -1063,6 +1076,7 @@ def main(
     COLLECT_BACKOFF_OPTIMIZER_DIAGNOSTICS=False,
     UE_SPATIAL_DISTRIBUTION="uniform",
     UE_LOCATION_SEED=None,
+    UE_SPATIAL_BETA_B=1.0,
 ):
     # 模式設定
     np.random.seed(SEED) # 固定隨機種子以確保可重現性
@@ -1095,6 +1109,8 @@ def main(
     print(f"Satellite pool: {SATELLITE_POOL_FILENAME}")
     print(f"Group table: {GROUP_TABLE_FILENAME}")
     print(f"Actual UE spatial distribution: {UE_SPATIAL_DISTRIBUTION}")
+    if UE_SPATIAL_DISTRIBUTION == "beta_enclosed_area":
+        print(f"Actual UE Beta concentration b: {UE_SPATIAL_BETA_B:g}")
     if selection_mode == 5:
         print(f"Mode 5 load EMA beta: {LOAD_AWARE_LOAD_EMA_BETA}")
     # Optional QoS sweep hook: use the default delay distribution when none is provided.
@@ -1192,6 +1208,7 @@ def main(
         radius_km=R_km,
         distribution=UE_SPATIAL_DISTRIBUTION,
         random_generator=location_rng,
+        beta_b=UE_SPATIAL_BETA_B,
     )
     if UE_LOCATION_SEED is not None:
         # Keep packet arrivals, QoS draws, and channel randomness aligned with
@@ -1576,6 +1593,7 @@ def main(
         "selection_policy_variation_max": selection_policy_variation_max,
         "backoff_optimizer_history": ctrl.backoff_optimizer_history,
         "ue_spatial_distribution": UE_SPATIAL_DISTRIBUTION,
+        "ue_spatial_beta_b": float(UE_SPATIAL_BETA_B),
     }
     if COLLECT_COLLISION_DIAGNOSTICS:
         run_history["collision_history"] = collision_history
