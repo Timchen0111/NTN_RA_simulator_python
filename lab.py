@@ -379,7 +379,7 @@ if RHO_SWEEP_PB:
         interpolation="nearest",
     )
     cbar = plt.colorbar(im)
-    cbar.set_label("Average backoff probability (expanded above 0.8)")
+    cbar.set_label("Average backoff probability (expanded scale above 0.8)")
     cbar.set_ticks([0.0, 0.2, 0.4, 0.6, 0.8, 0.85, 0.9, 0.95, 1.0])
 
     plt.title("Average Backoff Probability under Different Arrival Rates")
@@ -2585,13 +2585,13 @@ if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
         ),
         (
             3,
-            Path("group_ps_table_top3.npz"),
-            Path("group_ps_table.npz"),
+            Path("group_ps_table_planes_3_nested_top3.npz"),
+            None,
         ),
         (
             4,
-            Path("group_ps_table_planes_4_top3.npz"),
-            Path("group_ps_table_planes_4.npz"),
+            Path("group_ps_table_planes_4_nested_top3.npz"),
+            None,
         ),
     )
     TOP_K_ORBIT_POLICIES = (
@@ -2655,7 +2655,10 @@ if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
             raise FileNotFoundError(
                 f"Mode 19 Top-3 table not found: {top3_table_path}"
             )
-        if not reference_table_path.exists():
+        if (
+            reference_table_path is not None
+            and not reference_table_path.exists()
+        ):
             raise FileNotFoundError(
                 f"Mode 19 reference table not found: {reference_table_path}"
             )
@@ -2741,69 +2744,77 @@ if RUN_TOP_K_ORBIT_PLANE_COMPARISON:
                 f"{top3_table_path} and current TLE file do not match."
             )
 
-        with np.load(reference_table_path, allow_pickle=True) as reference:
-            required_reference_keys = (
-                "sat_norad_ids",
-                "scenario_start_dt_iso",
-                "tle_file_sha256",
-                "seconds",
-                "trao_ms",
-                "num_points",
-            )
-            missing_reference_keys = [
-                key for key in required_reference_keys
-                if key not in reference.files
-            ]
-            if missing_reference_keys:
-                raise ValueError(
-                    f"{reference_table_path} is missing required fields: "
-                    f"{missing_reference_keys}"
+        if reference_table_path is not None:
+            with np.load(reference_table_path, allow_pickle=True) as reference:
+                required_reference_keys = (
+                    "sat_norad_ids",
+                    "scenario_start_dt_iso",
+                    "tle_file_sha256",
+                    "seconds",
+                    "trao_ms",
+                    "num_points",
                 )
-            reference_satellite_ids = np.asarray(
-                reference["sat_norad_ids"],
-                dtype=int,
-            )
-            if not np.array_equal(
-                scenario_data["satellite_ids"],
-                reference_satellite_ids,
-            ):
-                raise ValueError(
-                    f"{top3_table_path} satellite IDs do not match "
-                    f"{reference_table_path}."
+                missing_reference_keys = [
+                    key for key in required_reference_keys
+                    if key not in reference.files
+                ]
+                if missing_reference_keys:
+                    raise ValueError(
+                        f"{reference_table_path} is missing required fields: "
+                        f"{missing_reference_keys}"
+                    )
+                reference_satellite_ids = np.asarray(
+                    reference["sat_norad_ids"],
+                    dtype=int,
                 )
-            if str(reference["scenario_start_dt_iso"]) != (
-                scenario_data["scenario_start_dt_iso"]
-            ):
-                raise ValueError(
-                    f"{top3_table_path} and {reference_table_path} "
-                    "start times do not match."
-                )
-            if str(reference["tle_file_sha256"]) != (
-                scenario_data["tle_file_sha256"]
-            ):
-                raise ValueError(
-                    f"{top3_table_path} and {reference_table_path} "
-                    "TLE hashes do not match."
-                )
-            for metadata_key in ("seconds", "trao_ms", "num_points"):
-                if int(reference[metadata_key]) != scenario_data[metadata_key]:
+                if not np.array_equal(
+                    scenario_data["satellite_ids"],
+                    reference_satellite_ids,
+                ):
+                    raise ValueError(
+                        f"{top3_table_path} satellite IDs do not match "
+                        f"{reference_table_path}."
+                    )
+                if str(reference["scenario_start_dt_iso"]) != (
+                    scenario_data["scenario_start_dt_iso"]
+                ):
                     raise ValueError(
                         f"{top3_table_path} and {reference_table_path} "
-                        f"{metadata_key} values do not match."
+                        "start times do not match."
                     )
-            reference_radius = (
-                float(reference["radius_km"])
-                if "radius_km" in reference.files
-                else 200.0
-            )
-            if not np.isclose(
-                reference_radius,
-                scenario_data["radius_km"],
-            ):
-                raise ValueError(
-                    f"{top3_table_path} and {reference_table_path} "
-                    "service radii do not match."
+                if str(reference["tle_file_sha256"]) != (
+                    scenario_data["tle_file_sha256"]
+                ):
+                    raise ValueError(
+                        f"{top3_table_path} and {reference_table_path} "
+                        "TLE hashes do not match."
+                    )
+                for metadata_key in (
+                    "seconds",
+                    "trao_ms",
+                    "num_points",
+                ):
+                    if int(reference[metadata_key]) != (
+                        scenario_data[metadata_key]
+                    ):
+                        raise ValueError(
+                            f"{top3_table_path} and "
+                            f"{reference_table_path} {metadata_key} "
+                            "values do not match."
+                        )
+                reference_radius = (
+                    float(reference["radius_km"])
+                    if "radius_km" in reference.files
+                    else 200.0
                 )
+                if not np.isclose(
+                    reference_radius,
+                    scenario_data["radius_km"],
+                ):
+                    raise ValueError(
+                        f"{top3_table_path} and {reference_table_path} "
+                        "service radii do not match."
+                    )
 
         if len(scenario_data["weight_table"]) != len(
             scenario_data["rao_indices"]
