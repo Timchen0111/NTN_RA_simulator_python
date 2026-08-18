@@ -167,7 +167,7 @@ import main
 #
 # =============================================================================
 EXPERIMENT_CODE = 2
-SIM_SECONDS = 5
+SIM_SECONDS = 3
 SIM_RHO_VALUES = np.array([1.0,1.5,2.0,2.5,3.0])
 # Kept separate because this diagnostic intentionally spans a much wider load
 # range than the rho values used by the comparison experiments.
@@ -474,13 +474,13 @@ if RHO_SWEEP_PB:
     )
     axis.set(
         title="Average Backoff Probability under Different Arrival Rates",
-        xlabel="",
-        ylabel="",
-        zlabel="",
+        xlabel="Remaining RAO",
+        ylabel="Arrival rate (packets/s)",
+        zlabel="Average backoff probability",
         xlim=(20.6, 0.4),
         ylim=(
-            float(np.min(rho_axis)) - bar_depth,
             float(np.max(rho_axis)) + bar_depth,
+            float(np.min(rho_axis)) - bar_depth,
         ),
         zlim=(0.0, 1.0),
         xticks=[1, 5, 10, 15, 20],
@@ -490,94 +490,12 @@ if RHO_SWEEP_PB:
     axis.set_yticklabels([f"{rho:g}" for rho in rho_axis])
     axis.view_init(elev=25, azim=55)
     axis.set_box_aspect((1.8, 1.2, 0.8))
-    # mplot3d chooses native y/z-axis edges differently across Matplotlib
-    # versions. Hide those version-dependent axes and draw fixed front-left
-    # axes in data coordinates so local and remote renders remain identical.
-    axis.yaxis.line.set_visible(False)
-    axis.zaxis.line.set_visible(False)
-    axis.tick_params(axis="y", which="both", length=0)
-    axis.tick_params(axis="z", which="both", length=0)
-    for tick_label in axis.get_yticklabels():
-        tick_label.set_alpha(0.0)
-    for tick_label in axis.get_zticklabels():
-        tick_label.set_alpha(0.0)
-    custom_z_axis_x = remaining_rao_axis[0] - 0.45
-    custom_z_axis_y = float(np.min(rho_axis)) - bar_depth
-    custom_y_axis_end = float(np.max(rho_axis)) + bar_depth
-    axis.plot(
-        [custom_z_axis_x, custom_z_axis_x],
-        [custom_z_axis_y, custom_y_axis_end],
-        [0.0, 0.0],
-        color="black",
-        linewidth=1.0,
-    )
-    for rho_tick in rho_axis:
-        axis.plot(
-            [custom_z_axis_x, custom_z_axis_x + 0.28],
-            [rho_tick, rho_tick],
-            [0.0, 0.0],
-            color="black",
-            linewidth=0.8,
-        )
-        axis.text(
-            custom_z_axis_x - 0.20,
-            rho_tick,
-            0.0,
-            f"{rho_tick:g}",
-            ha="right",
-            va="top",
-        )
-    z_tick_values = np.linspace(0.0, 1.0, 6)
-    axis.plot(
-        [custom_z_axis_x, custom_z_axis_x],
-        [custom_z_axis_y, custom_z_axis_y],
-        [0.0, 1.0],
-        color="black",
-        linewidth=1.0,
-    )
-    for z_tick in z_tick_values:
-        axis.plot(
-            [custom_z_axis_x, custom_z_axis_x + 0.28],
-            [custom_z_axis_y, custom_z_axis_y],
-            [z_tick, z_tick],
-            color="black",
-            linewidth=0.8,
-        )
-        axis.text(
-            custom_z_axis_x - 0.20,
-            custom_z_axis_y,
-            z_tick,
-            f"{z_tick:.1f}",
-            ha="right",
-            va="center",
-        )
-    axis.text2D(
-        0.64,
-        0.10,
-        "Remaining RAO",
-        transform=axis.transAxes,
-        rotation=0,
-        ha="center",
-        va="center",
-    )
-    axis.text2D(
-        0.29,
-        0.08,
-        "Arrival rate (packets/s)",
-        transform=axis.transAxes,
-        rotation=0,
-        ha="center",
-        va="center",
-    )
-    axis.text2D(
-        0.08,
-        0.72,
-        "Average backoff probability",
-        transform=axis.transAxes,
-        rotation=0,
-        ha="left",
-        va="center",
-    )
+    axis.xaxis.set_rotate_label(True)
+    axis.yaxis.set_rotate_label(True)
+    axis.zaxis.set_rotate_label(True)
+    axis.xaxis.labelpad = 14
+    axis.yaxis.labelpad = 16
+    axis.zaxis.labelpad = 14
     figure.subplots_adjust(
         left=0.02,
         right=0.98,
