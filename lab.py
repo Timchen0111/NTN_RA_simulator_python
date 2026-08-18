@@ -475,8 +475,8 @@ if RHO_SWEEP_PB:
     axis.set(
         title="Average Backoff Probability under Different Arrival Rates",
         xlabel="Remaining RAO",
-        ylabel="",
-        zlabel="",
+        ylabel="Arrival rate (packets/s)",
+        zlabel="Average backoff probability",
         xlim=(20.6, 0.4),
         ylim=(
             float(np.min(rho_axis)) - bar_depth,
@@ -488,27 +488,17 @@ if RHO_SWEEP_PB:
         zticks=np.linspace(0.0, 1.0, 6),
     )
     axis.set_yticklabels([f"{rho:g}" for rho in rho_axis])
-    axis.view_init(elev=25, azim=-55)
+    axis.view_init(elev=25, azim=55)
     axis.set_box_aspect((1.8, 1.2, 0.8))
-    axis.xaxis.labelpad = 8
-    axis.text2D(
-        0.76,
-        0.08,
-        "Arrival rate (packets/s)",
-        transform=axis.transAxes,
-        rotation=32,
-        ha="center",
-        va="center",
-    )
-    axis.text2D(
-        0.965,
-        0.50,
-        "Average backoff probability",
-        transform=axis.transAxes,
-        rotation=90,
-        ha="center",
-        va="center",
-    )
+    axis.xaxis.set_rotate_label(False)
+    axis.yaxis.set_rotate_label(False)
+    axis.zaxis.set_rotate_label(False)
+    axis.xaxis.label.set_rotation(0)
+    axis.yaxis.label.set_rotation(0)
+    axis.zaxis.label.set_rotation(90)
+    axis.xaxis.labelpad = 10
+    axis.yaxis.labelpad = 12
+    axis.zaxis.labelpad = 10
     figure.subplots_adjust(
         left=0.02,
         right=0.98,
