@@ -476,7 +476,7 @@ if RHO_SWEEP_PB:
         title="Average Backoff Probability under Different Arrival Rates",
         xlabel="Remaining RAO",
         ylabel="Arrival rate (packets/s)",
-        zlabel="Average backoff probability",
+        zlabel="",
         xlim=(20.6, 0.4),
         ylim=(
             float(np.min(rho_axis)) - bar_depth,
@@ -492,13 +492,53 @@ if RHO_SWEEP_PB:
     axis.set_box_aspect((1.8, 1.2, 0.8))
     axis.xaxis.set_rotate_label(False)
     axis.yaxis.set_rotate_label(False)
-    axis.zaxis.set_rotate_label(False)
     axis.xaxis.label.set_rotation(0)
     axis.yaxis.label.set_rotation(0)
-    axis.zaxis.label.set_rotation(90)
     axis.xaxis.labelpad = 10
     axis.yaxis.labelpad = 12
-    axis.zaxis.labelpad = 10
+
+    # mplot3d chooses the native z-axis edge differently across Matplotlib
+    # versions. Hide that version-dependent axis and draw a fixed front-left
+    # z-axis in data coordinates so local and remote renders remain identical.
+    axis.zaxis.line.set_visible(False)
+    axis.tick_params(axis="z", which="both", length=0)
+    for tick_label in axis.get_zticklabels():
+        tick_label.set_visible(False)
+    custom_z_axis_x = remaining_rao_axis[0] - 0.45
+    custom_z_axis_y = float(np.min(rho_axis)) - bar_depth
+    z_tick_values = np.linspace(0.0, 1.0, 6)
+    axis.plot(
+        [custom_z_axis_x, custom_z_axis_x],
+        [custom_z_axis_y, custom_z_axis_y],
+        [0.0, 1.0],
+        color="black",
+        linewidth=1.0,
+    )
+    for z_tick in z_tick_values:
+        axis.plot(
+            [custom_z_axis_x, custom_z_axis_x + 0.28],
+            [custom_z_axis_y, custom_z_axis_y],
+            [z_tick, z_tick],
+            color="black",
+            linewidth=0.8,
+        )
+        axis.text(
+            custom_z_axis_x - 0.20,
+            custom_z_axis_y,
+            z_tick,
+            f"{z_tick:.1f}",
+            ha="right",
+            va="center",
+        )
+    axis.text2D(
+        0.09,
+        0.50,
+        "Average backoff probability",
+        transform=axis.transAxes,
+        rotation=90,
+        ha="center",
+        va="center",
+    )
     figure.subplots_adjust(
         left=0.02,
         right=0.98,
