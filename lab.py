@@ -458,7 +458,7 @@ if RHO_SWEEP_PB:
     z_positions = np.zeros(average_p_b_matrix.size, dtype=float)
     bar_heights = average_p_b_matrix.ravel()
 
-    figure = plt.figure(figsize=(10, 7))
+    figure = plt.figure(figsize=(12, 8))
     axis = figure.add_subplot(111, projection="3d")
     axis.bar3d(
         x_positions,
@@ -475,7 +475,7 @@ if RHO_SWEEP_PB:
     axis.set(
         title="Average Backoff Probability under Different Arrival Rates",
         xlabel="Remaining RAO",
-        ylabel="Per-UE arrival rate (packets/s)",
+        ylabel="Arrival rate (packets/s)",
         zlabel="Average backoff probability",
         xlim=(20.6, 0.4),
         ylim=(
@@ -490,7 +490,15 @@ if RHO_SWEEP_PB:
     axis.set_yticklabels([f"{rho:g}" for rho in rho_axis])
     axis.view_init(elev=25, azim=-55)
     axis.set_box_aspect((1.8, 1.2, 0.8))
-    figure.tight_layout()
+    axis.xaxis.labelpad = 8
+    axis.yaxis.labelpad = 12
+    axis.zaxis.labelpad = 12
+    figure.subplots_adjust(
+        left=0.03,
+        right=0.76,
+        bottom=0.10,
+        top=0.90,
+    )
     plt.show()
 
     print("\n--- Rho Sweep p_b Complete ---")
